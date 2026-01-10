@@ -40,14 +40,15 @@ class OptimalSolution(BaseModel):
     space_complexity: str
     language_specific_implementation: str
 
+class SimpleSolution(BaseModel):
+    approach: str
+    time_complexity: str
+    space_complexity: str
+    language_specific_implementation: str
+
 class DSAAssistantResponse(BaseModel):
-    clarifying_questions: List[str]
-    edge_cases: List[str]
     optimal_solution: OptimalSolution
-    intuition: str
-    other_solutions_one_liner: str
-    test_cases: List[str]
-    limitations: List[str]
+    simple_solution: SimpleSolution
 
 def take_screenshot():
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -83,13 +84,16 @@ def format_structured_for_overlay_sections(data: DSAAssistantResponse) -> List[T
     opt_lines += wrap_lines(f"Space: {data.optimal_solution.space_complexity}", w)
     opt_lines += ["Implementation:"]
     opt_lines += wrap_lines(data.optimal_solution.language_specific_implementation, w)
-    sections.append(("Optimal Solution", opt_lines))
-    sections.append(("Other (less optimal)", wrap_lines(data.other_solutions_one_liner, w)))
-    sections.append(("Clarifying Questions", [*sum((wrap_lines(f"- {q}", w) for q in data.clarifying_questions), [])]))
-    sections.append(("Edge Cases", [*sum((wrap_lines(f"- {ec}", w) for ec in data.edge_cases), [])]))
-    sections.append(("Intuition", wrap_lines(data.intuition, w)))
-    sections.append(("Test Cases", [*sum((wrap_lines(f"- {tc}", w) for tc in data.test_cases), [])]))
-    sections.append(("Limitations", [*sum((wrap_lines(f"- {tc}", w) for tc in data.limitations), [])]))
+    sections.append(("Optimal Python Solution", opt_lines))
+    
+    simple_lines: List[str] = []
+    simple_lines += wrap_lines(f"Approach: {data.simple_solution.approach}", w)
+    simple_lines += wrap_lines(f"Time: {data.simple_solution.time_complexity}", w)
+    simple_lines += wrap_lines(f"Space: {data.simple_solution.space_complexity}", w)
+    simple_lines += ["Implementation:"]
+    simple_lines += wrap_lines(data.simple_solution.language_specific_implementation, w)
+    sections.append(("Simpler Solution", simple_lines))
+    
     return sections
 
 def _mk_color(r, g, b, a=0.9):
@@ -118,12 +122,8 @@ def _update_status(text: str):
 
 
 SECTION_COLOR = {
-    "Clarifying Questions": _mk_color(25, 60, 140),
-    "Edge Cases": _mk_color(0, 110, 90),
-    "Optimal Solution": _mk_color(90, 0, 140),
-    "Intuition": _mk_color(140, 50, 0),
-    "Other (less optimal)": _mk_color(45, 45, 45),
-    "Test Cases": _mk_color(0, 85, 150),
+    "Optimal Python Solution": _mk_color(90, 0, 140),
+    "Simpler Solution": _mk_color(0, 110, 90),
 }
 
 TITLE_FONT = NSFont.boldSystemFontOfSize_(13)
@@ -204,24 +204,24 @@ def call_anthropic_structured_with_retry(ocr_text: str, max_retries: int = 2) ->
     for attempt in range(max_retries + 1):
         try:
             prompt = f"""You are a helpful coding assistant for DSA interview problems.
-Analyze this OCR text and respond with ONLY valid JSON (no markdown, no extra text), if you can implement the solution without a hashmap/dictionary with comparable, prefer that implementation:
+Analyze this OCR text and respond with ONLY valid JSON (no markdown, no extra text):
 <ocr_text>{ocr_text}</ocr_text>
 Output JSON with this EXACT structure:
 {{
-    "clarifying_questions": ["question 1", "question 2", ...],  // 3-5 questions about output types, inputs, error handling
-    "edge_cases": ["edge case 1", "edge case 2", ...],  // 3-5 edge cases
     "optimal_solution": {{
-        "approach": "description of approach",
+        "approach": "description of optimal approach",
         "time_complexity": "O(...)",
         "space_complexity": "O(...)",
         "language_specific_implementation": "# Comment for line 1\\ncode_line_1\\n# Comment for line 2\\ncode_line_2..."
     }},
-    "intuition": "explanation of the logic",
-    "other_solutions_one_liner": "Brief description of 1-2 suboptimal solutions",
-    "test_cases": ["assert func(input) == output", ...]  // 5-7 test cases
-    "limitations": ["limitation 1", "limitation 2", ...]  // 2-3 limitations of the solution or the implementation 
+    "simple_solution": {{
+        "approach": "description of simpler approach (avoid complex algorithms like Kahn's algorithm, advanced data structures, etc.)",
+        "time_complexity": "O(...)",
+        "space_complexity": "O(...)",
+        "language_specific_implementation": "# Comment for line 1\\ncode_line_1\\n# Comment for line 2\\ncode_line_2..."
+    }}
 }}"""
-            response = anth_client.messages.create( model="claude-opus-4-1-20250805", max_tokens=4096, temperature=0.1, messages=[{"role": "user", "content": prompt}])
+            response = anth_client.messages.create( model="claude-opus-4-5-20251101", max_tokens=4096, temperature=0.1, messages=[{"role": "user", "content": prompt}])
             response_text = response.content[0].text.strip()
             if response_text.startswith("```json"): response_text = response_text[7:]
             if response_text.startswith("```"): response_text = response_text[3:]
