@@ -221,7 +221,7 @@ Output JSON with this EXACT structure:
     "test_cases": ["assert func(input) == output", ...]  // 5-7 test cases
     "limitations": ["limitation 1", "limitation 2", ...]  // 2-3 limitations of the solution or the implementation 
 }}"""
-            response = anth_client.messages.create( model="claude-opus-4-1-20250805", max_tokens=4096, temperature=0.1, messages=[{"role": "user", "content": prompt}])
+            response = anth_client.messages.create( model="claude-opus-4-5-20251101", max_tokens=4096, temperature=0.1, messages=[{"role": "user", "content": prompt}])
             response_text = response.content[0].text.strip()
             if response_text.startswith("```json"): response_text = response_text[7:]
             if response_text.startswith("```"): response_text = response_text[3:]
