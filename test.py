@@ -264,6 +264,8 @@ def run_pipeline():
 
 app = NSApplication.sharedApplication()
 window = NSWindow.alloc().initWithContentRect_styleMask_backing_defer_( (OVERLAY_ORIGIN, (window_width, window_height)), 15, 2, False)
+window.setTitlebarAppearsTransparent_(True)  # Make title bar translucent
+window.setSharingType_(0)  # NSWindowSharingNone - Don't show in screen sharing/recordings
 window.setBackgroundColor_(NSColor.clearColor())
 window.setOpaque_(False)
 window.setHasShadow_(False)
