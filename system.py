@@ -296,7 +296,7 @@ import json
 import base64
 from typing import Optional
 
-ANTHROPIC_MODEL = "claude-opus-4-1-20250805"  # Using Claude Sonnet 4
+ANTHROPIC_MODEL = "claude-opus-4-1-20250805" 
 
 def build_system_design_prompt(ocr_text: str) -> str:
     return f"""
@@ -356,6 +356,7 @@ NON-FUNCTIONAL REQUIREMENTS (1-2 min):
 - Avoid generic statements like "should be fast" - be specific to the system
 
 CAPACITY ESTIMATION (skip unless it influences design):
+- If the prompt includes estimates, extract them here and use them for the rest of the design
 - Only include if calculations directly impact architecture choices
 - Example: calculating if data fits in memory vs needs sharding
 - Skip generic DAU/QPS calculations that just conclude "it's a lot"
@@ -369,9 +370,9 @@ CORE ENTITIES (2 min):
 API DESIGN (5 min):
 - If the prompt includes API requirements, extract them here and use them for the rest of the design
 - Default to REST unless you have specific reasons for GraphQL or RPC
-- Format: POST /v1/resources, GET /v1/resources/{{id}}
+- Format: POST /v1/resources , GET /v1/resources/{{id}}
+- include response type, body of requests, and responses showing key fields and their types 
 - Use plural resource names, put IDs in paths not bodies
-- Derive user context from auth tokens, never trust client-provided user IDs
 
 DATA FLOW (optional, 5 min):
 - Only for data processing systems with multi-step pipelines
@@ -379,7 +380,8 @@ DATA FLOW (optional, 5 min):
 - Skip for typical CRUD applications
 
 HIGH LEVEL DESIGN (10-15 min):
-- Components should be generic building blocks, not specific tech choices
+- Take into account all prior sections and the prompt-- if the high level design includes the user's desktop, for example, incorporate that into your design
+- Components should be generic building blocks that serve a specific purpose, not specific tech choices
 - Start simple - entities and arrows that satisfy your API endpoints
 - Build incrementally: go through each API endpoint and add components needed
 - Common components: Load Balancer, API Gateway, Application Servers, 
