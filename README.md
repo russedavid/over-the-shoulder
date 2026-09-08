@@ -2,7 +2,7 @@
 
 A desktop collaborator that follows a person's task, understands the surrounding conversation, and helps create the artifact they are working on.
 
-The repository currently contains the earlier Python/AppKit prototype. Its outstanding source changes were preserved in commit `c6f644a` before the overhaul. The new application has not yet been implemented.
+The repository contains the Python/PyObjC/AppKit prototype. Its outstanding source changes were preserved in commit `c6f644a`. The planned refactor keeps this application and UI stack, unifies its task workflow, and improves the existing window. The overhaul has not yet been implemented.
 
 - [Product and refactoring plan](docs/over-the-shoulder-coder-plan.md)
 - [Current implementation audit](docs/current-system-audit.md)

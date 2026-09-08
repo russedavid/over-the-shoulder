@@ -2,6 +2,8 @@
 
 Read `docs/over-the-shoulder-coder-plan.md`, `docs/current-system-audit.md`, and `docs/assistance-contract.md` before the overhaul.
 
+Keep the existing Python/PyObjC/AppKit application. Refactor into modules within that application and improve its existing window. The owner explicitly rejected a SwiftUI rewrite and separate Python engine process. Prioritize the requested task behavior and concrete interaction improvements; do not turn module separation into a new service or IPC architecture.
+
 The primary user is trying to complete a task and create or change an artifact. Surrounding conversation is part of that work: acknowledge, answer, assess, challenge, or defer relevant questions and suggestions, and connect useful input to the artifact. Do not turn the product into a generic meeting summarizer or a collection of interview modes.
 
 Use one task-centered interaction model. Coding, system design, diagrams, explanations, and suggested replies are output capabilities within it. A conversation-only response is valid when no artifact change is justified.

@@ -2,7 +2,9 @@
 
 This is a proposed application contract, not an implemented API. The example is hand-authored product-design material, not a captured conversation or model evaluation result.
 
-## State shared by the engine and UI
+These are Python data objects and model-response structures used within the existing application. They do not imply a separate engine process or a frontend/backend IPC protocol.
+
+## State used by task logic and rendering
 
 | Record | Essential fields | Rule |
 |---|---|---|
