@@ -1,0 +1,65 @@
+{
+  "fixture_provenance": "Hand-authored product-contract example; not a real capture or model evaluation",
+  "schema_version": "proposal-0.1",
+  "session_id": "example-session",
+  "task_id": "example-mean-helper",
+  "context_revision": 7,
+  "request_id": "example-request-7",
+  "stage": "deep",
+  "task": {
+    "goal": "Help the primary user finish an arithmetic-mean helper with an explicit empty-input contract",
+    "working_artifact_id": "mean-helper",
+    "understanding": "The visible helper divides by the input count. A participant suggests returning zero for empty input.",
+    "workspace_completeness": "observed_fragment"
+  },
+  "context_events": [
+    {
+      "id": "example-screen-1",
+      "kind": "synthetic_screen_text",
+      "content": "def mean(values):\n    return sum(values) / len(values)",
+      "completeness": "function_fragment"
+    },
+    {
+      "id": "example-speech-2",
+      "kind": "synthetic_speech",
+      "audio_source": "system",
+      "speaker_role": "other_participant",
+      "role_basis": "explicit fixture label, not an identity inference",
+      "content": "Could we just return zero when the list is empty?"
+    }
+  ],
+  "conversation_responses": [
+    {
+      "responds_to": "example-speech-2",
+      "action": "challenge",
+      "text": "Zero is a valid average, so it would hide the difference between no measurements and measurements averaging zero. Returning None keeps that distinction. The caller must handle it explicitly.",
+      "artifact_effect": "Propose an empty-input guard; the return-value contract still needs the primary user's acceptance."
+    }
+  ],
+  "artifacts": [
+    {
+      "id": "mean-helper-example",
+      "revision": 2,
+      "supersedes_revision": 1,
+      "kind": "code",
+      "scope": "example_replacement_helper",
+      "title": "Keep missing input distinct from a zero average",
+      "evidence_ids": ["example-screen-1", "example-speech-2"],
+      "language": "python",
+      "clean_code": "def mean(values):\n    if not values:\n        return None\n    return sum(values) / len(values)\n",
+      "line_annotations": [
+        {"line": 1, "text": "Define a helper for a sized collection of numeric values."},
+        {"line": 2, "text": "Check for empty input before attempting division."},
+        {"line": 3, "text": "Represent the absence of a measurement separately from the numeric value zero."},
+        {"line": 4, "text": "Compute the arithmetic mean after establishing that the count is nonzero."}
+      ],
+      "copy_options": ["clean_code", "annotated_markdown"],
+      "apply_available": false,
+      "limitations": [
+        "This is an example, not a verified diff against a complete connected file.",
+        "The input type and caller behavior have not been inspected.",
+        "No tests were run as part of this illustrative response."
+      ]
+    }
+  ]
+}

@@ -19,8 +19,10 @@ captures/
 runtime/
 /lib/*.png
 /*.png
-screenshot_*
-capture_*
+screenshot_*.png
+screenshot_*.jpg
+capture_*.png
+capture_*.jpg
 pair_response_*.json
 pair_profile.jsonl
 *.wav
