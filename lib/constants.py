@@ -24,6 +24,10 @@ _SAMPLE_RATE = 16000
 _PAIR_AUDIO_CHUNK_SEC = int(os.getenv("PAIR_AUDIO_CHUNK_SEC", "20"))
 _PAIR_CAPTURE_WAIT_SEC = float(os.getenv("PAIR_CAPTURE_WAIT_SEC", "8"))
 _OPENAI_TIMEOUT_SEC = float(os.getenv("OPENAI_TIMEOUT_SEC", "240"))
+_CODEX_TIMEOUT_SEC = int(os.getenv("CODEX_TIMEOUT_SEC", "240"))
+PAIR_PROCESS_BACKEND = os.getenv("PAIR_PROCESS_BACKEND", "codex").strip().lower()
+PAIR_REPO_ROOT = os.getenv("PAIR_REPO_ROOT", "").strip()
+PAIR_CODEX_MODEL = os.getenv("PAIR_CODEX_MODEL", "").strip()
 _PARAKEET_MODEL = os.getenv("PARAKEET_MODEL", "mlx-community/parakeet-tdt-0.6b-v3")
 
 _PROJECT_MD_PATH = os.path.abspath("zpds_system_design.md")
@@ -31,18 +35,11 @@ _PROJECT_IMAGE_PATH = os.path.abspath("zpds_system_design.png")
 
 _MODE_A_PAGES = [["Mode", "Optimal Solution", "Clarifying Questions"], ["Edge Cases", "Test Cases", "Limitations"]]
 _SYSTEM_PAGES = [["Mode", "Functional Requirements", "Non-Functional Reqs", "Capacity Estimation", "Core Entities"], ["API Design", "Data Flow", "High-Level Design"], ["Data Models", "Component Descriptions"], ["Deep Dives"]]
-_PRODUCT_PAGES = [["Mode", "Functional Requirements", "User Journey", "Frontend Design"], ["Non-Functional Reqs", "Capacity Estimation", "Core Entities"], ["API Design", "Data Flow", "High-Level Design"], ["Data Models", "Component Descriptions"], ["Tradeoffs", "Edge Cases", "LLM Design"], ["Deep Dives"]]
-_AI_SYSTEM_PAGES = [
-    ["Mode", "Functional Requirements", "Non-Functional Reqs", "Capacity Estimation", "Core Entities"],
-    ["API Design", "Data Flow", "High-Level Design"],
-    ["Data Models", "Component Descriptions"],
-    ["Deep Dives"],
-]
 _PAIR_PAGES = [
-    ["Pair Response", "Python", "SQL", "Conversational Response"],
-    ["Pair Python"],
-    ["Pair SQL"],
-    ["Pair Conversation"],
+    ["Task Focus", "Repo Setup", "Install", "Database Setup", "Run API Server", "Run Scripts", "Validate Scripts", "Other Useful Commands"],
+    ["Pair Response", "Changed Files", "Implementation Plan", "Code Suggestions"],
+    ["Suggested Diff", "Code Suggestions Detail"],
+    ["Codex Notes", "Pair Conversation"],
     ["Pair Metadata"],
 ]
 _BEHAVIORAL_PAIR_PAGES = [
@@ -64,8 +61,6 @@ OPENAI_FAST_REASONING = {"effort": "none"}
 
 _MIDI_HELP_DSA = "47=run 48=mode 49=flip 50=cont 51=simp 43=hide/show"
 _MIDI_HELP_SYSTEM = "47=run 48=mode 49=flip 43=hide/show"
-_MIDI_HELP_PRODUCT = "47=run 48=mode 49=flip 43=hide/show"
-_MIDI_HELP_AI_SYSTEM = "47=run 48=mode 49=flip 43=hide/show"
 _MIDI_HELP_PAIR = "47=process 48=mode 49=flip 50=capture 51=clear 43=hide/show"
 _MIDI_HELP_BEHAVIORAL_PAIR = "47=process 48=mode 49=flip 51=clear 43=hide/show"
 _MIDI_HELP_PROJECT = "47=top 48=mode 49=flip 43=hide/show"
@@ -135,13 +130,15 @@ __all__ = [
     "_PAIR_AUDIO_CHUNK_SEC",
     "_PAIR_CAPTURE_WAIT_SEC",
     "_OPENAI_TIMEOUT_SEC",
+    "_CODEX_TIMEOUT_SEC",
+    "PAIR_PROCESS_BACKEND",
+    "PAIR_REPO_ROOT",
+    "PAIR_CODEX_MODEL",
     "_PARAKEET_MODEL",
     "_PROJECT_MD_PATH",
     "_PROJECT_IMAGE_PATH",
     "_MODE_A_PAGES",
     "_SYSTEM_PAGES",
-    "_PRODUCT_PAGES",
-    "_AI_SYSTEM_PAGES",
     "_PAIR_PAGES",
     "_BEHAVIORAL_PAIR_PAGES",
     "OPENAI_REASONING_MODEL",
@@ -155,8 +152,6 @@ __all__ = [
     "OPENAI_FAST_REASONING",
     "_MIDI_HELP_DSA",
     "_MIDI_HELP_SYSTEM",
-    "_MIDI_HELP_PRODUCT",
-    "_MIDI_HELP_AI_SYSTEM",
     "_MIDI_HELP_PAIR",
     "_MIDI_HELP_BEHAVIORAL_PAIR",
     "_MIDI_HELP_PROJECT",

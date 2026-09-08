@@ -4,7 +4,7 @@ from typing import Optional
 from pynput import keyboard
 
 
-_MODE_ORDER = ["system", "product", "ml_system_design", "mode_a", "pair", "behavioral_pair", "project"]
+_MODE_ORDER = ["system", "mode_a", "pair", "behavioral_pair", "project"]
 _NOTE_DEBOUNCE_SEC = 0.15
 _FN_VK = 63
 _FN_ARROW_MOVES = {
@@ -28,6 +28,8 @@ def _extract_vk(key) -> Optional[int]:
 
 
 def _next_mode(current_mode: str) -> str:
+    if current_mode not in _MODE_ORDER:
+        return _MODE_ORDER[0]
     return _MODE_ORDER[(_MODE_ORDER.index(current_mode) + 1) % len(_MODE_ORDER)]
 
 

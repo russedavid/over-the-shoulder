@@ -567,15 +567,15 @@ New OCR:
 
 def build_pair_process_prompt(pair_context_json: str, transcript_text: str) -> str:
     return f"""You are a pair-programming assistant. Use the cumulative code/context and the running meeting transcript to infer
-the current request and propose the next useful code/design response or answer to an inquiry.
+the current request and propose the next useful implementation response or answer to an inquiry.
 
 If there is no explicit request yet, summarize the current state and the most likely next steps.
 Do not invent files or code not present in context. Be direct and implementation-oriented.
 
-Your response should be a concrete code suggestion or an answer to a clear question, not a general analysis. 
-These problems revolve around data transformation. The interviewer may ask for the response in either python or sql.
-Therefore, you should solve the problem in each language independently, without trying to make them match each other.
-Write the Python first, then write the SQL.
+Your response should be a concrete full-stack implementation suggestion or an answer to a clear question, not a general analysis.
+The active task may involve frontend UI, backend APIs, data modeling, database queries, validation, tests,
+configuration, debugging, or system integration. Infer the language, framework, and layer from the visible context.
+Do not assume Python or SQL unless the context clearly calls for them.
 If the transcript includes a direct question, answer it based on the context. 
 
 When determining the most likely request, consider:
@@ -587,15 +587,15 @@ Populate the structured response fields this way:
 - summary: one concise sentence describing the current state or answer.
 - likely_request: the most likely active user/interviewer request.
 - questions: only blocking, clarifying questions; use an empty list if none.
-- python: executable or paste-ready Python for the request
-- sql: executable or paste-ready SQL for the request
+- implementation_plan: concise ordered implementation steps across the relevant app layers.
+- code_suggestions: paste-ready code snippets or patch-sized changes. Each item should include a title, optional path, optional language, code, and optional notes.
 - conversational_response: the short spoken/written answer to show the user.
 
 Do not provide high-level explanations or multiple options. 
 Focus on the most likely next step that would be helpful in the current context.
 Code should be formatted with indentations and line breaks as it would appear in a real file, 
 not as a single line.
-The code sections should be the addition or modification that directly addresses the most likely request, not a full file dump.
+Code suggestions should be additions or modifications that directly address the most likely request, not full file dumps.
 The conversational_response should be a direct answer to the most recent question or a brief summary of the code change, not a general analysis.
 
 Context:
@@ -691,10 +691,6 @@ __all__ = [
     "build_mode_a_simplify_prompt",
     "build_system_diagram_prompt",
     "build_system_prompt",
-    "build_ai_system_prompt",
-    "build_ai_system_diagram_prompt",
-    "build_product_system_prompt",
-    "build_product_system_diagram_prompt",
     "build_pair_context_prompt",
     "build_pair_process_prompt",
     "build_behavioral_pair_prompt",

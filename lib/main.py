@@ -1,7 +1,11 @@
 import os, sys, json, queue, traceback
 import importlib.util
+import shutil
+import subprocess
+import tempfile
 
 import time, threading, mido, base64, atexit
+from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import pyautogui
 from pynput import keyboard
@@ -32,10 +36,6 @@ _current_mode = "project"
 _mode_a_view_mode, _mode_a_results_shown, _mode_a_full_sections = 0, False, None
 _system_view_mode, _system_results_shown, _system_full_sections, _system_diagram_path = 0, False, None, None
 _system_diagram_status, _system_diagram_started_at = "idle", None
-_product_view_mode, _product_results_shown, _product_full_sections, _product_diagram_path = 0, False, None, None
-_product_diagram_status, _product_diagram_started_at = "idle", None
-_ai_system_view_mode, _ai_system_results_shown, _ai_system_full_sections, _ai_system_diagram_path = 0, False, None, None
-_ai_system_diagram_status, _ai_system_diagram_started_at = "idle", None
 _pair_view_mode, _pair_full_sections = 0, None
 _behavioral_pair_view_mode, _behavioral_pair_full_sections, _behavioral_pair_showing_cheat = 0, None, False
 _project_view_mode, _project_text_pages = 0, []
@@ -135,31 +135,6 @@ class SystemDesignResponse(BaseModel):
     core_entities: List[str]; api_design: ApiDesign; data_flow: Optional[List[str]] = None; high_level_design: HighLevelDesign
     data_models: List[DataModel]; component_descriptions: Optional[List[ComponentDescription]] = None; deep_dives: List[DeepDive]
 
-class UserJourneyStep(BaseModel):
-    step: int; actor: str; action: str; system_component: str; result: str
-
-class Tradeoff(BaseModel):
-    decision: str; options_considered: List[str]; chosen_option: str; rationale: str
-
-class EdgeCase(BaseModel):
-    scenario: str; handling: str
-
-class FrontendDesign(BaseModel):
-    surfaces: List[str]; client_state: Optional[str] = None; realtime_or_offline_behavior: Optional[str] = None; error_states: Optional[List[str]] = None
-
-class LLMDesign(BaseModel):
-    needed: bool; use_cases: Optional[List[str]] = None; components: Optional[List[str]] = None; risks: Optional[List[str]] = None; mitigations: Optional[List[str]] = None
-
-class ProductSystemDesignResponse(BaseModel):
-    functional_requirements: List[str]; non_functional_requirements: List[str]; capacity_estimation: Optional[CapacityEstimation] = None
-    user_journey: List[UserJourneyStep]; frontend_design: Optional[FrontendDesign] = None; llm_design: Optional[LLMDesign] = None
-    core_entities: List[str]; api_design: ApiDesign; data_flow: Optional[List[str]] = None; high_level_design: HighLevelDesign
-    data_models: List[DataModel]; component_descriptions: Optional[List[ComponentDescription]] = None
-    tradeoffs: List[Tradeoff]; edge_cases: List[EdgeCase]; deep_dives: List[DeepDive]
-
-class AISystemDesignResponse(SystemDesignResponse):
-    pass
-
 class PairContextFile(BaseModel):
     path: str
     content: str
@@ -173,13 +148,37 @@ class PairContextUpdate(BaseModel):
     open_questions: List[str] = []
     summary: str = ""
 
+class PairCodeSuggestion(BaseModel):
+    title: str
+    code: str
+    language: Optional[str] = None
+    path: Optional[str] = None
+    notes: Optional[str] = None
+
 class PairProcessResponse(BaseModel):
     summary: str
     likely_request: str
     questions: List[str]
-    python: str
-    sql: str
+    implementation_plan: List[str]
+    code_suggestions: List[PairCodeSuggestion]
     conversational_response: str
+
+class CodexPairFinalMessage(BaseModel):
+    summary: str
+    likely_request: str
+    implementation_plan: List[str]
+    test_notes: List[str]
+    conversational_response: str
+
+class CodexPairResponse(BaseModel):
+    summary: str
+    likely_request: str
+    implementation_plan: List[str]
+    changed_files: List[str]
+    suggested_diff: str
+    test_notes: List[str]
+    conversational_response: str
+    repo_root: str
 
 class BehavioralPairResponse(BaseModel):
     latest_question: str
@@ -337,16 +336,19 @@ SECTION_COLOR = {
     "Capacity Estimation": _mk_color(120, 40, 80), "Core Entities": _mk_color(0, 100, 80),
     "API Design": _mk_color(0, 85, 150), "Data Flow": _mk_color(90, 60, 0), "High-Level Design": _mk_color(90, 0, 140),
     "Data Models": _mk_color(0, 110, 90), "Component Descriptions": _mk_color(140, 50, 0), "Deep Dives": _mk_color(140, 0, 60),
-    "User Journey": _mk_color(0, 100, 130), "Frontend Design": _mk_color(90, 0, 140), "Tradeoffs": _mk_color(120, 40, 80),
-    "Edge Cases": _mk_color(0, 110, 90), "LLM Design": _mk_color(100, 60, 160),
+    "Edge Cases": _mk_color(0, 110, 90),
     "Controls": _mk_color(80, 80, 80), "Voice Question": _mk_color(0, 100, 130), "Previous": _mk_color(100, 100, 100),
     "Answer": _mk_color(0, 130, 80), "Deep Dive": _mk_color(100, 60, 160), "Diagram": _mk_color(60, 60, 140), "Status": _mk_color(200, 120, 0), "status:": _mk_color(45, 45, 45),
     "Clarifying Questions": _mk_color(25, 60, 140), "Optimal Solution": _mk_color(90, 0, 140),
     "Test Cases": _mk_color(0, 85, 150), "Limitations": _mk_color(120, 40, 80),
     "Pair Controls": _mk_color(80, 80, 80), "Pair Status": _mk_color(200, 120, 0), "Context Files": _mk_color(0, 85, 150),
     "Terminal Output": _mk_color(90, 60, 0), "Transcript": _mk_color(0, 100, 130), "Pair Response": _mk_color(0, 130, 80),
-    "Pair Python": _mk_color(0, 120, 255), "Pair SQL": _mk_color(255, 150, 0), "Pair Conversation": _mk_color(210, 45, 255),
-    "Python": _mk_color(0, 120, 255), "SQL": _mk_color(255, 150, 0), "Conversational Response": _mk_color(210, 45, 255),
+    "Pair Conversation": _mk_color(210, 45, 255),
+    "Changed Files": _mk_color(0, 85, 150), "Suggested Diff": _mk_color(60, 60, 60), "Codex Notes": _mk_color(210, 45, 255),
+    "Implementation Plan": _mk_color(90, 0, 140), "Code Suggestions": _mk_color(0, 120, 255), "Code Suggestions Detail": _mk_color(0, 120, 255),
+    "Task Focus": _mk_color(0, 130, 80), "Repo Setup": _mk_color(25, 60, 140), "Install": _mk_color(0, 85, 150),
+    "Database Setup": _mk_color(90, 0, 140), "Run API Server": _mk_color(0, 100, 130), "Run Scripts": _mk_color(0, 85, 150),
+    "Validate Scripts": _mk_color(120, 40, 80), "Other Useful Commands": _mk_color(100, 60, 160),
     "Pair Metadata": _mk_color(100, 60, 160), "Pair Details": _mk_color(100, 60, 160), "Notes": _mk_color(100, 60, 160), "Open Questions": _mk_color(140, 0, 60),
     "Behavioral Response": _mk_color(0, 130, 80), "Behavioral Transcript": _mk_color(0, 100, 130), "Behavioral Metadata": _mk_color(100, 60, 160),
     "Headline and Key Ideas": _mk_color(0, 130, 80),
@@ -458,96 +460,6 @@ def generate_diagram_async(data: SystemDesignResponse):
     finally:
         if _current_mode == "system" and _system_view_mode == len(_SYSTEM_PAGES): AppHelper.callAfter(_show_diagram_view)
 
-def call_openai_ai_system(ocr_text: str, image_path: Optional[str]) -> Optional[AISystemDesignResponse]:
-    try: client = _openai_client()
-    except Exception as e:
-        _record_openai_error("OpenAI AI SYSTEM", e)
-        return None
-    messages = [{"role": "user", "content": build_ai_system_prompt(ocr_text)}]
-    try:
-        response = client.responses.parse(
-            model=OPENAI_REASONING_MODEL,
-            input=_openai_input(messages, image_path=image_path),
-            text_format=AISystemDesignResponse,
-            reasoning=OPENAI_HIGH_REASONING,
-            max_output_tokens=32000,
-        )
-        return response.output_parsed
-    except Exception as e:
-        _record_openai_error("OpenAI AI SYSTEM", e)
-        return None
-
-def generate_ai_system_diagram_async(data: AISystemDesignResponse):
-    global _ai_system_diagram_path, _ai_system_diagram_status, _ai_system_diagram_started_at
-    _ai_system_diagram_status, _ai_system_diagram_started_at = "generating", time.time()
-    try:
-        client = _openai_client()
-        response = client.images.generate(
-            model=OPENAI_IMAGE_MODEL,
-            prompt=build_ai_system_diagram_prompt(data),
-            size="1536x1024",
-            quality="high",
-            output_format="png",
-        )
-        if response.data and response.data[0].b64_json:
-            path = os.path.abspath(f"diagram_ai_system_{time.strftime('%Y%m%d_%H%M%S')}.png")
-            with open(path, "wb") as f: f.write(base64.b64decode(response.data[0].b64_json))
-            _ai_system_diagram_path, _ai_system_diagram_status = path, "ready"
-            if _current_mode == "ml_system_design" and _ai_system_view_mode == len(_AI_SYSTEM_PAGES): AppHelper.callAfter(_show_ai_system_diagram_view)
-            return
-        _ai_system_diagram_status = "failed"
-        _record_openai_error("OpenAI AI SYSTEM IMAGE", RuntimeError("image response did not include b64_json data"))
-    except Exception as e:
-        _ai_system_diagram_status = "failed"
-        _record_openai_error("OpenAI AI SYSTEM IMAGE", e)
-    finally:
-        if _current_mode == "ml_system_design" and _ai_system_view_mode == len(_AI_SYSTEM_PAGES): AppHelper.callAfter(_show_ai_system_diagram_view)
-
-def call_openai_product_system(ocr_text: str, image_path: Optional[str]) -> Optional[ProductSystemDesignResponse]:
-    try: client = _openai_client()
-    except Exception as e:
-        _record_openai_error("OpenAI PRODUCT", e)
-        return None
-    messages = [{"role": "user", "content": build_product_system_prompt(ocr_text)}]
-    try:
-        response = client.responses.parse(
-            model=OPENAI_REASONING_MODEL,
-            input=_openai_input(messages, image_path=image_path),
-            text_format=ProductSystemDesignResponse,
-            reasoning=OPENAI_HIGH_REASONING,
-            max_output_tokens=36000,
-        )
-        return response.output_parsed
-    except Exception as e:
-        _record_openai_error("OpenAI PRODUCT", e)
-        return None
-
-def generate_product_diagram_async(data: ProductSystemDesignResponse):
-    global _product_diagram_path, _product_diagram_status, _product_diagram_started_at
-    _product_diagram_status, _product_diagram_started_at = "generating", time.time()
-    try:
-        client = _openai_client()
-        response = client.images.generate(
-            model=OPENAI_IMAGE_MODEL,
-            prompt=build_product_system_diagram_prompt(data),
-            size="1536x1024",
-            quality="high",
-            output_format="png",
-        )
-        if response.data and response.data[0].b64_json:
-            path = os.path.abspath(f"diagram_product_{time.strftime('%Y%m%d_%H%M%S')}.png")
-            with open(path, "wb") as f: f.write(base64.b64decode(response.data[0].b64_json))
-            _product_diagram_path, _product_diagram_status = path, "ready"
-            if _current_mode == "product" and _product_view_mode == len(_PRODUCT_PAGES): AppHelper.callAfter(_show_product_diagram_view)
-            return
-        _product_diagram_status = "failed"
-        _record_openai_error("OpenAI PRODUCT IMAGE", RuntimeError("image response did not include b64_json data"))
-    except Exception as e:
-        _product_diagram_status = "failed"
-        _record_openai_error("OpenAI PRODUCT IMAGE", e)
-    finally:
-        if _current_mode == "product" and _product_view_mode == len(_PRODUCT_PAGES): AppHelper.callAfter(_show_product_diagram_view)
-
 _pair_context_lock = threading.Lock()
 _pair_context = PairContextUpdate()
 _pair_capture_queue = queue.Queue()
@@ -563,7 +475,7 @@ _pair_audio_chunk_index = 0
 _pair_capture_count, _pair_processed_capture_count, _pair_process_count = 0, 0, 0
 _pair_generation = 0
 _pair_transcript_segments: List[Dict[str, str]] = []
-_pair_last_response: Optional[PairProcessResponse] = None
+_pair_last_response: Optional[BaseModel] = None
 _pair_last_response_path: Optional[str] = None
 _behavioral_pair_last_response: Optional[BehavioralPairResponse] = None
 _behavioral_pair_last_response_path: Optional[str] = None
@@ -656,7 +568,7 @@ def _pair_profile(event: str, start: Optional[float] = None, **fields):
         parts.append(f"{key}={_pair_profile_print_value(key, value)}")
     print(f"[PAIR PROFILE] {event}" + (f" {' '.join(parts)}" if parts else ""), flush=True)
 
-def _save_pair_response(response: PairProcessResponse) -> str:
+def _save_pair_response(response: BaseModel) -> str:
     start = time.perf_counter()
     path = _pair_session_path(f"pair_response_{time.strftime('%Y%m%d_%H%M%S')}.json")
     with open(path, "w", encoding="utf-8") as f:
@@ -992,8 +904,8 @@ def call_openai_pair_process() -> Optional[PairProcessResponse]:
             openai_start,
             success=True,
             questions=len(data.get("questions", []) or []),
-            python_chars=len(data.get("python", "") or ""),
-            sql_chars=len(data.get("sql", "") or ""),
+            plan_items=len(data.get("implementation_plan", []) or []),
+            code_suggestions=len(data.get("code_suggestions", []) or []),
             conversational_chars=len(data.get("conversational_response", "") or ""),
         )
         return parsed
@@ -1001,6 +913,266 @@ def call_openai_pair_process() -> Optional[PairProcessResponse]:
         _record_openai_error("OpenAI PAIR PROCESS", e)
         _pair_profile("pair_process_openai", openai_start, success=False, error=str(e))
         return None
+
+_CODEX_PAIR_FINAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "likely_request": {"type": "string"},
+        "implementation_plan": {"type": "array", "items": {"type": "string"}},
+        "test_notes": {"type": "array", "items": {"type": "string"}},
+        "conversational_response": {"type": "string"},
+    },
+    "required": ["summary", "likely_request", "implementation_plan", "test_notes", "conversational_response"],
+    "additionalProperties": False,
+}
+_CODEX_COPY_IGNORE_DIRS = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    "dist",
+    "build",
+}
+_CODEX_COPY_IGNORE_NAMES = {
+    ".DS_Store",
+    ".env",
+    ".env.local",
+    ".codex_pair_final.json",
+    ".codex_pair_schema.json",
+}
+
+def _resolve_pair_repo_root() -> str:
+    configured = PAIR_REPO_ROOT.strip()
+    base = Path(configured).expanduser() if configured else Path.cwd()
+    try:
+        base = base.resolve()
+    except Exception:
+        base = Path(os.path.abspath(str(base)))
+    if not base.exists():
+        source = "PAIR_REPO_ROOT" if configured else "current working directory"
+        raise RuntimeError(f"{source} does not exist: {base}")
+    proc = subprocess.run(
+        ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        if configured:
+            raise RuntimeError(f"PAIR_REPO_ROOT must point inside a Git repo: {base}")
+        raise RuntimeError("Run from inside a Git repo or set PAIR_REPO_ROOT=/path/to/repo")
+    return str(Path(proc.stdout.strip()).resolve())
+
+def _codex_copy_skip(rel_path: str) -> bool:
+    rel = Path(rel_path)
+    if rel.is_absolute() or ".." in rel.parts:
+        return True
+    for part in rel.parts:
+        if part in _CODEX_COPY_IGNORE_DIRS or part.startswith("pair_session_") or part.startswith("behavioral_pair_session_"):
+            return True
+    name = rel.name
+    return name in _CODEX_COPY_IGNORE_NAMES or name.startswith(".env.") or name.endswith((".pyc", ".pyo"))
+
+def _source_repo_files(repo_root: str) -> List[str]:
+    proc = subprocess.run(
+        ["git", "-C", repo_root, "ls-files", "-co", "--exclude-standard", "-z"],
+        capture_output=True,
+        check=True,
+    )
+    files = [p.decode("utf-8", errors="surrogateescape") for p in proc.stdout.split(b"\0") if p]
+    return [p for p in files if not _codex_copy_skip(p)]
+
+def _copy_repo_to_scratch(repo_root: str) -> Tuple[str, str]:
+    repo_root_path = Path(repo_root).resolve()
+    scratch_parent = tempfile.mkdtemp(prefix="codex_pair_")
+    scratch_repo_path = Path(scratch_parent) / "repo"
+    scratch_repo_path.mkdir(parents=True)
+
+    copied = 0
+    for rel_path in _source_repo_files(str(repo_root_path)):
+        src = repo_root_path / rel_path
+        dst = scratch_repo_path / rel_path
+        if not src.exists() and not src.is_symlink():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_symlink():
+            os.symlink(os.readlink(src), dst)
+        elif src.is_file():
+            shutil.copy2(src, dst)
+        else:
+            continue
+        copied += 1
+
+    subprocess.run(["git", "init", "-q"], cwd=scratch_repo_path, check=True)
+    subprocess.run(["git", "config", "user.email", "codex-pair@example.local"], cwd=scratch_repo_path, check=True)
+    subprocess.run(["git", "config", "user.name", "codex-pair"], cwd=scratch_repo_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=scratch_repo_path, check=True)
+    subprocess.run(["git", "commit", "--allow-empty", "-q", "-m", "baseline"], cwd=scratch_repo_path, check=True)
+    _pair_profile("codex_scratch_copy", repo_root=str(repo_root_path), files=copied, scratch=scratch_repo_path)
+    return str(scratch_repo_path), scratch_parent
+
+def _write_codex_pair_schema(scratch_parent: str) -> str:
+    schema_path = os.path.join(scratch_parent, "codex_pair_schema.json")
+    with open(schema_path, "w", encoding="utf-8") as f:
+        json.dump(_CODEX_PAIR_FINAL_SCHEMA, f, indent=2)
+    return schema_path
+
+def build_codex_pair_prompt(transcript_text: str, pair_context_json: str) -> str:
+    return f"""You are running inside a disposable scratch copy of the user's local repository.
+
+Use the audio transcript to infer the latest concrete full-stack coding request. Inspect the repository as needed.
+Make suggested edits only in this scratch copy. Do not commit. Do not access the network.
+Do not modify credentials, secrets, generated lockfiles, or unrelated files.
+Prefer the smallest coherent patch.
+If the request is unclear, do not edit files; explain the blocking question.
+
+This is language- and framework-agnostic. Infer the stack from the repository and existing files.
+Depending on the request, relevant changes may be in frontend UI, backend APIs, data models,
+database queries/migrations, validation, tests, config, or documentation. Follow existing project patterns.
+
+The caller will extract and display the git diff from this scratch copy.
+Your final response must fit the provided JSON schema.
+
+Supplemental screen/OCR context, possibly noisy:
+<pair_context_json>
+{pair_context_json}
+</pair_context_json>
+
+Audio transcript:
+<transcript>
+{transcript_text}
+</transcript>""".strip()
+
+def _run_codex_exec(scratch_repo: str, scratch_parent: str, prompt: str) -> str:
+    final_path = os.path.join(scratch_parent, "codex_pair_final.json")
+    schema_path = _write_codex_pair_schema(scratch_parent)
+    cmd = ["codex"]
+    if PAIR_CODEX_MODEL:
+        cmd += ["-m", PAIR_CODEX_MODEL]
+    cmd += [
+        "-a", "never",
+        "exec",
+        "--cd", scratch_repo,
+        "--sandbox", "workspace-write",
+        "--ephemeral",
+        "--output-schema", schema_path,
+        "--output-last-message", final_path,
+        "--color", "never",
+        "-",
+    ]
+    proc = subprocess.run(
+        cmd,
+        input=prompt,
+        cwd=scratch_repo,
+        text=True,
+        capture_output=True,
+        timeout=_CODEX_TIMEOUT_SEC,
+    )
+    final_message = ""
+    if os.path.exists(final_path):
+        with open(final_path, "r", encoding="utf-8") as f:
+            final_message = f.read().strip()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Codex failed.\n"
+            f"stdout:\n{proc.stdout[-4000:]}\n\n"
+            f"stderr:\n{proc.stderr[-4000:]}\n\n"
+            f"final_message:\n{final_message[-4000:]}"
+        )
+    return final_message or proc.stdout.strip()
+
+def _scratch_diff(scratch_repo: str) -> Tuple[List[str], str]:
+    subprocess.run(["git", "add", "-N", "."], cwd=scratch_repo, check=False, capture_output=True, text=True)
+    changed = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD"],
+        cwd=scratch_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    diff = subprocess.run(
+        ["git", "diff", "--no-ext-diff", "--unified=3", "--binary", "HEAD"],
+        cwd=scratch_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return changed, diff
+
+def _parse_codex_final_message(final_message: str) -> CodexPairFinalMessage:
+    text = final_message.strip()
+    try:
+        data = json.loads(text)
+    except Exception:
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            data = json.loads(text[start:end + 1])
+        else:
+            data = {
+                "summary": "Codex completed.",
+                "likely_request": "Inferred from latest audio transcript",
+                "implementation_plan": [],
+                "test_notes": [],
+                "conversational_response": text or "Codex completed with no final message.",
+            }
+    data.setdefault("implementation_plan", [])
+    data.setdefault("test_notes", [])
+    return CodexPairFinalMessage(**data)
+
+def call_codex_pair_process(transcript_text: str, pair_context_json: str) -> Optional[CodexPairResponse]:
+    scratch_repo = scratch_parent = None
+    total_start = time.perf_counter()
+    try:
+        repo_root = _resolve_pair_repo_root()
+        _set_pair_status(f"copying repo: {os.path.basename(repo_root)}")
+        scratch_repo, scratch_parent = _copy_repo_to_scratch(repo_root)
+        prompt = build_codex_pair_prompt(transcript_text, pair_context_json)
+        _pair_profile("codex_pair_prompt_build", prompt_chars=len(prompt), transcript_chars=len(transcript_text), repo_root=repo_root)
+
+        _set_pair_status("running codex in scratch repo")
+        codex_start = time.perf_counter()
+        final_message = _run_codex_exec(scratch_repo, scratch_parent, prompt)
+        _pair_profile("codex_exec", codex_start, final_chars=len(final_message))
+
+        changed_files, diff = _scratch_diff(scratch_repo)
+        if not diff.strip():
+            diff = "(no file edits suggested)"
+        final = _parse_codex_final_message(final_message)
+        _pair_profile("codex_pair_process", total_start, success=True, files=len(changed_files), diff_chars=len(diff))
+        return CodexPairResponse(
+            summary=final.summary,
+            likely_request=final.likely_request,
+            implementation_plan=final.implementation_plan,
+            changed_files=changed_files,
+            suggested_diff=diff,
+            test_notes=final.test_notes,
+            conversational_response=final.conversational_response,
+            repo_root=repo_root,
+        )
+    except Exception as e:
+        _record_openai_error("CODEX PAIR PROCESS", e)
+        _log_runtime_error("codex pair process", e)
+        _pair_profile("codex_pair_process", total_start, success=False, error=str(e))
+        return None
+    finally:
+        if scratch_parent:
+            shutil.rmtree(scratch_parent, ignore_errors=True)
+
+def call_pair_process():
+    backend = PAIR_PROCESS_BACKEND or "codex"
+    if backend == "openai":
+        return call_openai_pair_process()
+    if backend != "codex":
+        _record_openai_error("PAIR PROCESS", RuntimeError(f"unknown PAIR_PROCESS_BACKEND: {PAIR_PROCESS_BACKEND}"))
+        return None
+    transcript_text = _pair_transcript_text()
+    return call_codex_pair_process(transcript_text, _pair_context_json())
 
 def _load_interview_dimension_mapping() -> str:
     with open(_INTERVIEW_DIMENSION_MAPPING_PATH, "r", encoding="utf-8") as f:
@@ -1076,7 +1248,8 @@ def pair_process_context():
         except Exception as e:
             _set_pair_status(f"pre-process capture error: {e}")
             return
-    _pair_view_mode = 0
+    _pair_view_mode = 1
+    if _current_mode == "pair": AppHelper.callAfter(_render_pair_view)
     def _run():
         global _pair_last_response, _pair_last_response_path, _pair_process_count, _pair_view_mode
         total_start = time.perf_counter()
@@ -1096,12 +1269,12 @@ def pair_process_context():
             if audio_thread:
                 audio_thread.join()
             _pair_profile("pair_process_audio_flush_wait", audio_wait_start)
-            response = call_openai_pair_process()
+            response = call_pair_process()
             if response:
                 _pair_last_response = response
                 _pair_last_response_path = _save_pair_response(response)
                 _pair_process_count += 1
-                _pair_view_mode = 0
+                _pair_view_mode = 1
                 _set_pair_status(f"process {_pair_process_count} complete")
             else:
                 _set_pair_status(_last_openai_error or "process failed")
@@ -1359,24 +1532,101 @@ def format_pair_for_overlay_sections() -> List[Tuple[str, List[str]]]:
     status_line = f"Status: {_pair_status}"
     if _pair_last_response:
         resp = _model_to_dict(_pair_last_response)
-        python_code = resp.get("python", "") or ""
-        sql_code = resp.get("sql", "") or ""
-        conversational = resp.get("conversational_response", "") or ""
-        python_preview = wrap_lines(python_code or "(empty)", CHARS_PER_LINE)
-        sql_preview = wrap_lines(sql_code or "(empty)", CHARS_PER_LINE)
-        conversational_preview = wrap_lines(conversational or "(empty)", CHARS_PER_LINE)
-        sections.append(("Pair Response", [status_line]))
-        sections.append(("Python", python_preview + [""]))
-        sections.append(("SQL", sql_preview + [""]))
-        sections.append(("Conversational Response", conversational_preview))
+        if "suggested_diff" in resp:
+            conversational = resp.get("conversational_response", "") or ""
+            summary_lines = [status_line]
+            summary_lines += wrap_lines(f"Summary: {resp.get('summary', '')}", CHARS_PER_LINE)
+            summary_lines += wrap_lines(f"Likely request: {resp.get('likely_request', '')}", CHARS_PER_LINE)
+            summary_lines += wrap_lines(f"Repo: {resp.get('repo_root', '')}", CHARS_PER_LINE)
+            sections.append(("Pair Response", summary_lines))
+            sections.append(("Changed Files", resp.get("changed_files", []) or ["(none)"]))
+            plan_items = resp.get("implementation_plan", []) or []
+            sections.append(("Implementation Plan", [*sum((wrap_lines(f"- {item}", CHARS_PER_LINE) for item in plan_items), [])] or ["(none)"]))
+            sections.append(("Code Suggestions", ["See Suggested Diff for the generated patch."]))
+            sections.append(("Suggested Diff", wrap_lines(resp.get("suggested_diff", "") or "(empty)", CHARS_PER_LINE)))
 
-        sections.append(("Pair Python", [status_line] + wrap_lines(python_code or "(empty)", CHARS_PER_LINE)))
-        sections.append(("Pair SQL", [status_line] + wrap_lines(sql_code or "(empty)", CHARS_PER_LINE)))
+            notes_lines: List[str] = []
+            test_notes = resp.get("test_notes", []) or []
+            if test_notes:
+                notes_lines.append("Tests/checks:")
+                notes_lines += [*sum((wrap_lines(f"- {note}", CHARS_PER_LINE) for note in test_notes), [])]
+                notes_lines.append("")
+            notes_lines += wrap_lines(conversational or "(empty)", CHARS_PER_LINE)
+            sections.append(("Codex Notes", notes_lines))
+            sections.append(("Pair Conversation", [status_line] + wrap_lines(conversational or "(empty)", CHARS_PER_LINE)))
+
+            metadata_lines = [status_line]
+            metadata_lines += wrap_lines(f"Backend: {PAIR_PROCESS_BACKEND}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Repo: {resp.get('repo_root', '')}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Changed files: {len(resp.get('changed_files', []) or [])}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Diff chars: {len(resp.get('suggested_diff', '') or '')}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Responses: {_pair_process_count}", CHARS_PER_LINE)
+            if _pair_last_response_path:
+                metadata_lines += wrap_lines(f"Saved: {_pair_last_response_path}", CHARS_PER_LINE)
+            sections.append(("Pair Metadata", metadata_lines))
+            return sections
+
+        if "code_suggestions" in resp:
+            conversational = resp.get("conversational_response", "") or ""
+            summary_lines = [status_line]
+            summary_lines += wrap_lines(f"Summary: {resp.get('summary', '')}", CHARS_PER_LINE)
+            summary_lines += wrap_lines(f"Likely request: {resp.get('likely_request', '')}", CHARS_PER_LINE)
+            questions = resp.get("questions", []) or []
+            if questions:
+                summary_lines.append("Questions:")
+                summary_lines += [*sum((wrap_lines(f"- {q}", CHARS_PER_LINE) for q in questions), [])]
+            sections.append(("Pair Response", summary_lines))
+
+            plan_items = resp.get("implementation_plan", []) or []
+            sections.append(("Implementation Plan", [*sum((wrap_lines(f"- {item}", CHARS_PER_LINE) for item in plan_items), [])] or ["(none)"]))
+
+            suggestions = resp.get("code_suggestions", []) or []
+            preview_lines: List[str] = []
+            detail_lines: List[str] = []
+            for idx, suggestion in enumerate(suggestions, start=1):
+                title = str(suggestion.get("title", f"Suggestion {idx}") if isinstance(suggestion, dict) else f"Suggestion {idx}")
+                language = str(suggestion.get("language") or "") if isinstance(suggestion, dict) else ""
+                path = str(suggestion.get("path") or "") if isinstance(suggestion, dict) else ""
+                notes = str(suggestion.get("notes") or "") if isinstance(suggestion, dict) else ""
+                code = str(suggestion.get("code") or "") if isinstance(suggestion, dict) else str(suggestion)
+                label = f"{idx}. {title}"
+                if path:
+                    label += f" ({path})"
+                elif language:
+                    label += f" ({language})"
+                preview_lines += wrap_lines(label, CHARS_PER_LINE)
+                if notes:
+                    preview_lines += wrap_lines(f"   {notes}", CHARS_PER_LINE)
+                detail_lines += wrap_lines(label, CHARS_PER_LINE)
+                if notes:
+                    detail_lines += wrap_lines(f"Notes: {notes}", CHARS_PER_LINE)
+                detail_lines += wrap_lines(code or "(empty)", CHARS_PER_LINE)
+                detail_lines.append("")
+            sections.append(("Code Suggestions", preview_lines or ["(none)"]))
+            sections.append(("Code Suggestions Detail", detail_lines or ["(none)"]))
+            sections.append(("Pair Conversation", [status_line] + wrap_lines(conversational or "(empty)", CHARS_PER_LINE)))
+
+            metadata_lines = [status_line]
+            metadata_lines += wrap_lines(f"Backend: {PAIR_PROCESS_BACKEND}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Suggestions: {len(suggestions)}", CHARS_PER_LINE)
+            metadata_lines += wrap_lines(f"Responses: {_pair_process_count}", CHARS_PER_LINE)
+            if _pair_last_response_path:
+                metadata_lines += wrap_lines(f"Saved: {_pair_last_response_path}", CHARS_PER_LINE)
+            sections.append(("Pair Metadata", metadata_lines))
+            return sections
+
+        conversational = resp.get("conversational_response", "") or ""
+        summary_lines = [status_line]
+        summary_lines += wrap_lines(f"Summary: {resp.get('summary', '')}", CHARS_PER_LINE)
+        summary_lines += wrap_lines(f"Likely request: {resp.get('likely_request', '')}", CHARS_PER_LINE)
+        sections.append(("Pair Response", summary_lines))
+        plan_items = resp.get("implementation_plan", []) or []
+        sections.append(("Implementation Plan", [*sum((wrap_lines(f"- {item}", CHARS_PER_LINE) for item in plan_items), [])] or ["(none)"]))
+        sections.append(("Code Suggestions", ["Unrecognized pair response shape. See conversation for details."]))
         sections.append(("Pair Conversation", [status_line] + wrap_lines(conversational or "(empty)", CHARS_PER_LINE)))
 
         metadata_lines = [status_line]
-        metadata_lines += wrap_lines(f"Summary: {resp.get('summary', '')}", CHARS_PER_LINE)
-        metadata_lines += wrap_lines(f"Likely request: {resp.get('likely_request', '')}", CHARS_PER_LINE)
+        metadata_lines += wrap_lines(f"Backend: {PAIR_PROCESS_BACKEND}", CHARS_PER_LINE)
         metadata_lines.append("Questions:")
         resp_questions = resp.get("questions", []) or []
         if resp_questions:
@@ -1385,12 +1635,20 @@ def format_pair_for_overlay_sections() -> List[Tuple[str, List[str]]]:
             metadata_lines.append("(none)")
         sections.append(("Pair Metadata", metadata_lines))
     else:
-        sections.append(("Pair Response", [status_line, "No process response yet.", "Press 47 to process accumulated context."]))
-        sections.append(("Python", ["(empty)", ""]))
-        sections.append(("SQL", ["(empty)", ""]))
-        sections.append(("Conversational Response", ["(empty)"]))
-        sections.append(("Pair Python", [status_line, "(empty)"]))
-        sections.append(("Pair SQL", [status_line, "(empty)"]))
+        repo_hint = PAIR_REPO_ROOT or "(current Git repo)"
+        sections.append(("Pair Response", [
+            status_line,
+            "No process response yet.",
+            "Press 47 to process accumulated context.",
+            f"Backend: {PAIR_PROCESS_BACKEND}",
+            f"Repo: {repo_hint}",
+        ]))
+        sections.append(("Changed Files", ["(none)"]))
+        sections.append(("Suggested Diff", ["(empty)"]))
+        sections.append(("Codex Notes", ["(empty)"]))
+        sections.append(("Implementation Plan", ["(empty)"]))
+        sections.append(("Code Suggestions", ["(empty)"]))
+        sections.append(("Code Suggestions Detail", ["(empty)"]))
         sections.append(("Pair Conversation", [status_line, "(empty)"]))
         sections.append(("Pair Metadata", [status_line, "Summary:", "(empty)", "Likely request:", "(empty)", "Questions:", "(none)"]))
     return sections
@@ -1428,7 +1686,7 @@ def format_behavioral_pair_for_overlay_sections() -> List[Tuple[str, List[str]]]
 
 def _render_pair_view():
     global _pair_full_sections
-    _pair_full_sections = format_pair_for_overlay_sections()
+    _pair_full_sections = format_pair_for_overlay_sections() + pair_program_cheat_sheet
     _update_overlay_sections(_get_page_sections(_pair_full_sections, _pair_view_mode, "pair"))
     _update_status(f"[PAIR] Page {_pair_view_mode + 1}/{len(_PAIR_PAGES)} | 47=process 50=capture 51=clear 43=hide/show")
 
@@ -1486,53 +1744,9 @@ def _extend_wrapped_limited(out: List[str], text: str, max_lines: int, prefix: s
     return max(0, len(lines) - remaining)
 
 def _get_page_sections(sections: List[Tuple[str, List[str]]], page: int, mode: str) -> List[Tuple[str, List[str]]]:
-    pages = _MODE_A_PAGES if mode == "mode_a" else _PAIR_PAGES if mode == "pair" else _BEHAVIORAL_PAIR_PAGES if mode == "behavioral_pair" else _AI_SYSTEM_PAGES if mode == "ml_system_design" else _PRODUCT_PAGES if mode == "product" else _SYSTEM_PAGES
+    pages = _MODE_A_PAGES if mode == "mode_a" else _PAIR_PAGES if mode == "pair" else _BEHAVIORAL_PAIR_PAGES if mode == "behavioral_pair" else _SYSTEM_PAGES
     if page >= len(pages): return []
     return [s for s in sections if s[0] in set(pages[page])]
-
-def _show_ai_system_diagram_view():
-    for sv in list(window.contentView().subviews()): sv.removeFromSuperview()
-    frame = window.frame(); page_num, total_pages = len(_AI_SYSTEM_PAGES) + 1, len(_AI_SYSTEM_PAGES) + 1
-    if _ai_system_diagram_path and os.path.exists(_ai_system_diagram_path):
-        img = NSImage.alloc().initWithContentsOfFile_(_ai_system_diagram_path)
-        if img:
-            img_view = NSImageView.alloc().initWithFrame_(((10, 10), (frame.size.width - 20, frame.size.height - 60)))
-            img_view.setImage_(img); img_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-            window.contentView().addSubview_(img_view)
-            _update_status(f"[AI SYSTEM] Diagram ({page_num}/{total_pages}) | {_MIDI_HELP_AI_SYSTEM}"); return
-    elapsed = int(time.time() - _ai_system_diagram_started_at) if _ai_system_diagram_started_at else 0
-    if _ai_system_diagram_status == "failed":
-        msg = _last_openai_error or "Diagram generation failed."
-        _place_label(msg[:220], 20, frame.size.height - 50, frame.size.width - 40, TITLE_HEIGHT, TITLE_FONT, _mk_color(140, 0, 60))
-        _update_status(f"[AI SYSTEM] Diagram failed ({page_num}/{total_pages}) | {_MIDI_HELP_AI_SYSTEM}"); return
-    if _ai_system_diagram_status == "generating" and elapsed > 180:
-        msg = f"Diagram still generating after {elapsed}s. It may be slow or stalled."
-        _place_label(msg, 20, frame.size.height - 50, frame.size.width - 40, TITLE_HEIGHT, TITLE_FONT, _mk_color(200, 120, 0))
-        _update_status(f"[AI SYSTEM] Diagram slow ({page_num}/{total_pages}) | {_MIDI_HELP_AI_SYSTEM}"); return
-    _place_label(f"Diagram generating... {elapsed}s", 20, frame.size.height - 50, 500, TITLE_HEIGHT, TITLE_FONT, _mk_color(60, 60, 140))
-    _update_status(f"[AI SYSTEM] Diagram ({page_num}/{total_pages}) generating... | {_MIDI_HELP_AI_SYSTEM}")
-
-def _show_product_diagram_view():
-    for sv in list(window.contentView().subviews()): sv.removeFromSuperview()
-    frame = window.frame(); page_num, total_pages = len(_PRODUCT_PAGES) + 1, len(_PRODUCT_PAGES) + 1
-    if _product_diagram_path and os.path.exists(_product_diagram_path):
-        img = NSImage.alloc().initWithContentsOfFile_(_product_diagram_path)
-        if img:
-            img_view = NSImageView.alloc().initWithFrame_(((10, 10), (frame.size.width - 20, frame.size.height - 60)))
-            img_view.setImage_(img); img_view.setImageScaling_(NSImageScaleProportionallyUpOrDown)
-            window.contentView().addSubview_(img_view)
-            _update_status(f"[PRODUCT] Diagram ({page_num}/{total_pages}) | {_MIDI_HELP_PRODUCT}"); return
-    elapsed = int(time.time() - _product_diagram_started_at) if _product_diagram_started_at else 0
-    if _product_diagram_status == "failed":
-        msg = _last_openai_error or "Diagram generation failed."
-        _place_label(msg[:220], 20, frame.size.height - 50, frame.size.width - 40, TITLE_HEIGHT, TITLE_FONT, _mk_color(140, 0, 60))
-        _update_status(f"[PRODUCT] Diagram failed ({page_num}/{total_pages}) | {_MIDI_HELP_PRODUCT}"); return
-    if _product_diagram_status == "generating" and elapsed > 180:
-        msg = f"Diagram still generating after {elapsed}s. It may be slow or stalled."
-        _place_label(msg, 20, frame.size.height - 50, frame.size.width - 40, TITLE_HEIGHT, TITLE_FONT, _mk_color(200, 120, 0))
-        _update_status(f"[PRODUCT] Diagram slow ({page_num}/{total_pages}) | {_MIDI_HELP_PRODUCT}"); return
-    _place_label(f"Diagram generating... {elapsed}s", 20, frame.size.height - 50, 500, TITLE_HEIGHT, TITLE_FONT, _mk_color(60, 60, 140))
-    _update_status(f"[PRODUCT] Diagram ({page_num}/{total_pages}) generating... | {_MIDI_HELP_PRODUCT}")
 
 def _show_diagram_view():
     for sv in list(window.contentView().subviews()): sv.removeFromSuperview()
@@ -1579,12 +1793,6 @@ def _rerender_current_view():
     elif _current_mode == "project":
         AppHelper.callAfter(_render_project_view)
         return
-    elif _current_mode == "product":
-        pages, view_mode, full_sections = _PRODUCT_PAGES, _product_view_mode, _product_full_sections
-        total_pages, midi_help = len(pages) + 1, _MIDI_HELP_PRODUCT
-    elif _current_mode == "ml_system_design":
-        pages, view_mode, full_sections = _AI_SYSTEM_PAGES, _ai_system_view_mode, _ai_system_full_sections
-        total_pages, midi_help = len(pages) + 1, _MIDI_HELP_AI_SYSTEM
     else:
         pages, view_mode, full_sections = _SYSTEM_PAGES, _system_view_mode, _system_full_sections
         total_pages, midi_help = len(pages) + 1, _MIDI_HELP_SYSTEM
@@ -1594,14 +1802,12 @@ def _rerender_current_view():
             AppHelper.callAfter(_update_overlay_sections, _get_page_sections(full_sections, view_mode, _current_mode))
             AppHelper.callAfter(_update_status, f"[{mode_label}] Page {view_mode + 1}/{total_pages} | {midi_help}")
     else:
-        if _current_mode == "product": AppHelper.callAfter(_show_product_diagram_view)
-        elif _current_mode == "ml_system_design": AppHelper.callAfter(_show_ai_system_diagram_view)
-        else: AppHelper.callAfter(_show_diagram_view)
+        AppHelper.callAfter(_show_diagram_view)
 
 def run_pipeline():
-    global _mode_a_results_shown, _system_results_shown, _product_results_shown, _ai_system_results_shown, _mode_a_view_mode, _system_view_mode, _product_view_mode, _ai_system_view_mode
-    global _mode_a_full_sections, _system_full_sections, _product_full_sections, _ai_system_full_sections, _system_diagram_path, _product_diagram_path, _ai_system_diagram_path
-    global _mode_a_conversation_history, _mode_a_turn_count, _last_openai_error, _system_diagram_status, _system_diagram_started_at, _product_diagram_status, _product_diagram_started_at, _ai_system_diagram_status, _ai_system_diagram_started_at
+    global _mode_a_results_shown, _system_results_shown, _mode_a_view_mode, _system_view_mode
+    global _mode_a_full_sections, _system_full_sections, _system_diagram_path
+    global _mode_a_conversation_history, _mode_a_turn_count, _last_openai_error, _system_diagram_status, _system_diagram_started_at
     mode = _current_mode
     _last_openai_error = None
     if mode == "project":
@@ -1619,14 +1825,6 @@ def run_pipeline():
     if mode == "mode_a":
         _mode_a_view_mode, _mode_a_conversation_history, _mode_a_turn_count = 0, [], 1
         cheat = mode_a_cheat_sheet
-    elif mode == "product":
-        _product_diagram_path, _product_view_mode = None, 0
-        _product_diagram_status, _product_diagram_started_at = "idle", None
-        cheat = product_system_cheat_sheet
-    elif mode == "ml_system_design":
-        _ai_system_diagram_path, _ai_system_view_mode = None, 0
-        _ai_system_diagram_status, _ai_system_diagram_started_at = "idle", None
-        cheat = ai_system_cheat_sheet
     else:
         _system_diagram_path, _system_view_mode = None, 0
         _system_diagram_status, _system_diagram_started_at = "idle", None
@@ -1646,28 +1844,6 @@ def run_pipeline():
                     _mode_a_full_sections = sections; _update_overlay_sections(sections); _update_status(f"[{mode_label}] Turn {turn} | {_MIDI_HELP_DSA}")
                 AppHelper.callAfter(_render); _mode_a_results_shown = True
             else: ui_update([_last_openai_error or f"[{mode_label}] (No response)"]); _mode_a_results_shown = False
-        elif mode == "product":
-            data = call_openai_product_system(ocr_text, image_path=shot)
-            if data:
-                sections = format_product_system_for_overlay_sections(data)
-                def _render():
-                    global _product_full_sections
-                    _product_full_sections = sections; _update_overlay_sections(sections); _update_status(f"[{mode_label}] All sections | {_MIDI_HELP_PRODUCT}")
-                AppHelper.callAfter(_render); _product_results_shown = True
-                threading.Thread(target=generate_product_diagram_async, args=(data,), daemon=True).start()
-            else:
-                ui_update([_last_openai_error or f"[{mode_label}] (No structured response)"]); _product_results_shown = False
-        elif mode == "ml_system_design":
-            data = call_openai_ai_system(ocr_text, image_path=shot)
-            if data:
-                sections = format_ai_system_for_overlay_sections(data)
-                def _render():
-                    global _ai_system_full_sections
-                    _ai_system_full_sections = sections; _update_overlay_sections(sections); _update_status(f"[{mode_label}] All sections | {_MIDI_HELP_AI_SYSTEM}")
-                AppHelper.callAfter(_render); _ai_system_results_shown = True
-                threading.Thread(target=generate_ai_system_diagram_async, args=(data,), daemon=True).start()
-            else:
-                ui_update([_last_openai_error or f"[{mode_label}] (No structured response)"]); _ai_system_results_shown = False
         else:
             data = call_openai_system(ocr_text, image_path=shot)
             if data:
@@ -1681,8 +1857,6 @@ def run_pipeline():
     except Exception as e:
         ui_update([f"Pipeline error: {e}"])
         if mode == "mode_a": _mode_a_results_shown = False
-        elif mode == "product": _product_results_shown = False
-        elif mode == "ml_system_design": _ai_system_results_shown = False
         else: _system_results_shown = False
     finally: _is_running.clear()
 
@@ -1959,24 +2133,66 @@ system_cheat_sheet = [
     ("Deep Dives", ["- Address NFRs and bottlenecks", "- Scaling strategies, Caching, Sharding", "- Consistency models, Rate limiting", "- For each: problem, solution, tradeoffs, implementation"]),
 ]
 
-product_system_cheat_sheet = [
-    _mode_section("product", "Product-first system design answer centered on user journey, frontend behavior, tradeoffs, and edge cases."),
-    ("Controls", ["47=Run/Clear  48=Switch Mode  49/F10=Flip Page  43=Hide/Show", "39=Voice  38=Voice Follow-up", "40=Smaller 41=Bigger | Fn+Arrow or MIDI 42/44/45/46=Move", "F1=Quit  F2=Interactive"]),
-    ("Functional Requirements", ["- Start with user-centered requirements: 'Users should be able to...'.", "- Keep scope to the core product journey.", "- Include admin/creator/moderator only when central."]),
-    ("User Journey", ["- Treat the end-to-end user flow as the spine.", "- Step through client -> API -> services -> storage/LLM -> response.", "- Call out async, realtime, offline, or error branches only when relevant."]),
-    ("Frontend Design", ["- Include surfaces, client state, realtime/offline behavior, and error states.", "- Explain frontend/backend boundaries when they affect UX, API contracts, latency, or consistency."]),
-    ("High-Level Design", ["- Use product-specific component labels.", "- Add frontend, backend, storage, async, external, and LLM components only when justified.", "- Avoid infrastructure dumps and unjustified queues/caches/vector stores."]),
-    ("Tradeoffs", ["- Cover likely probes: simple vs scalable, sync vs async, consistency vs latency.", "- Include product edge cases, abuse/privacy/reliability risks, and LLM-specific risks when relevant."]),
-]
-
-ai_system_cheat_sheet = [
-    _mode_section("ml_system_design", "AI product system design answer with a simple core architecture and advanced AI concerns reserved for deep dives."),
-    ("Controls", ["47=Run/Clear  48=Switch Mode  49/F10=Flip Page  43=Hide/Show", "39=Voice  38=Voice Follow-up", "40=Smaller 41=Bigger | Fn+Arrow or MIDI 42/44/45/46=Move", "F1=Quit  F2=Interactive"]),
-    ("Functional Requirements", ["- State the user-visible AI behavior clearly.", "- Prefer concrete verbs: answer, generate, summarize, classify, search, recommend.", "- Prioritize MVP behavior over platform completeness."]),
-    ("Non-Functional Reqs", ["- Quantify latency, availability, quality, safety, scale, cost, and privacy when relevant.", "- Include degraded mode only where provider, retrieval, or async job failure affects the product.", "- Avoid generic 'fast' or 'accurate' claims."]),
-    ("High-Level Design", ["- Keep the main design to the core request path and essential storage.", "- Prefer 5-8 major components; avoid drawing a full AI platform by default.", "- Add vector DB, queue/workers, object storage, or cache only when central to the prompt."]),
-    ("Data Flow", ["- Show the main user operation first.", "- Separate online inference, ingestion/indexing, or async job flow only when needed.", "- Keep optimizations out of the main flow unless they materially affect the architecture."]),
-    ("Deep Dives", ["- Put caching, fallbacks, safety, evals, observability, scaling, routing, RAG details, and cost controls here.", "- Diagram deep dives as small callouts, not full subsystems."]),
+pair_program_cheat_sheet = [
+    ("Task Focus", [
+        "First-round task: Red Planet Top Workplaces in README-Red-Planet.md.",
+        "Ignore backend/frontend small-ticket READMEs unless the email says otherwise.",
+        "Use --silent for output checks because required script output must be strict JSON only.",
+    ]),
+    ("Repo Setup", [
+        "cd /Users/davidrussell/Documents/CodeScreen_zk3mh2ml",
+        "nvm use",
+        "Overlay target if launched elsewhere:",
+        "PAIR_REPO_ROOT=/Users/davidrussell/Documents/CodeScreen_zk3mh2ml python3 lib/main.py",
+    ]),
+    ("Install", [
+        "npm run setup",
+        "Installs server and client dependencies. For the first task, mainly use server.",
+        "If root tooling like Prettier is needed: npm install",
+    ]),
+    ("Database Setup", [
+        "cd server",
+        "npx prisma@6 migrate dev --name init",
+        "",
+        "Reset and reseed local dev DB:",
+        "cd server",
+        "npx prisma@6 migrate reset",
+    ]),
+    ("Run API Server", [
+        "Terminal 1:",
+        "cd server",
+        "npm run start:dev",
+        "Default API URL: http://localhost:3000",
+    ]),
+    ("Run Scripts", [
+        "Terminal 2, from repo root:",
+        "npm run start:topWorkplaces --silent",
+        "npm run start:topWorkers --silent",
+        "",
+        "Or from server:",
+        "npm run start:topWorkplaces --silent",
+        "npm run start:topWorkers --silent",
+        "",
+        "Override API target:",
+        "API_BASE_URL=http://localhost:3000 npm run start:topWorkplaces --silent",
+    ]),
+    ("Validate Scripts", [
+        "With the API server already running:",
+        "cd server",
+        "npm run test:scripts",
+        "Checks that both top scripts run and emit parseable JSON.",
+    ]),
+    ("Other Useful Commands", [
+        "cd server",
+        "npm run build",
+        "npm run lint",
+        "npm run test:e2e",
+        "",
+        "cd client",
+        "npm run start:dev",
+        "npm run build",
+        "npm run lint",
+    ]),
 ]
 
 behavioral_pair_cheat_sheet = [
@@ -1985,18 +2201,13 @@ behavioral_pair_cheat_sheet = [
 ]
 
 _system_full_sections = system_cheat_sheet
-_ai_system_full_sections = ai_system_cheat_sheet
 _behavioral_pair_full_sections = behavioral_pair_cheat_sheet
 _render_project_view()
 
 def _flip_page():
-    global _mode_a_view_mode, _system_view_mode, _product_view_mode, _ai_system_view_mode, _pair_view_mode, _behavioral_pair_view_mode, _project_view_mode
+    global _mode_a_view_mode, _system_view_mode, _pair_view_mode, _behavioral_pair_view_mode, _project_view_mode
     if _current_mode == "mode_a":
         _mode_a_view_mode = (_mode_a_view_mode + 1) % len(_MODE_A_PAGES)
-    elif _current_mode == "product":
-        _product_view_mode = (_product_view_mode + 1) % (len(_PRODUCT_PAGES) + 1)
-    elif _current_mode == "ml_system_design":
-        _ai_system_view_mode = (_ai_system_view_mode + 1) % (len(_AI_SYSTEM_PAGES) + 1)
     elif _current_mode == "pair":
         _pair_view_mode = (_pair_view_mode + 1) % len(_PAIR_PAGES)
     elif _current_mode == "behavioral_pair":
@@ -2069,12 +2280,6 @@ def _switch_mode():
     if _current_mode == "mode_a":
         if _mode_a_results_shown and _mode_a_full_sections: _rerender_current_view()
         else: ui_update_sections(mode_a_cheat_sheet); AppHelper.callAfter(_update_status, f"[{mode_label}] Cheat Sheet | {midi_help}")
-    elif _current_mode == "product":
-        if _product_results_shown and _product_full_sections: _rerender_current_view()
-        else: ui_update_sections(product_system_cheat_sheet); AppHelper.callAfter(_update_status, f"[{mode_label}] Cheat Sheet | {midi_help}")
-    elif _current_mode == "ml_system_design":
-        if _ai_system_results_shown and _ai_system_full_sections: _rerender_current_view()
-        else: ui_update_sections(ai_system_cheat_sheet); AppHelper.callAfter(_update_status, f"[{mode_label}] Cheat Sheet | {midi_help}")
     elif _current_mode == "pair":
         if switched_between_audio_modes:
             ui_update_sections([("Status", ["Switching audio mode..."])])
@@ -2098,23 +2303,12 @@ def _switch_mode():
 _last_midi_ts = {}
 
 def _midi_run_or_clear():
-    global _mode_a_results_shown, _system_results_shown, _product_results_shown, _ai_system_results_shown, _mode_a_view_mode, _system_view_mode, _product_view_mode, _ai_system_view_mode, _project_view_mode
-    global _ai_system_full_sections, _ai_system_diagram_path, _ai_system_diagram_status, _ai_system_diagram_started_at
+    global _mode_a_results_shown, _system_results_shown, _mode_a_view_mode, _system_view_mode, _project_view_mode
     global _mode_a_conversation_history, _mode_a_turn_count
     if _current_mode == "mode_a":
         if _mode_a_results_shown:
             _mode_a_results_shown, _mode_a_view_mode, _mode_a_conversation_history, _mode_a_turn_count = False, 0, [], 0
             ui_update_sections(mode_a_cheat_sheet); _update_status(f"[DSA] Cleared | {_MIDI_HELP_DSA}"); return
-    elif _current_mode == "product":
-        if _product_results_shown:
-            _product_results_shown, _product_view_mode = False, 0
-            ui_update_sections(product_system_cheat_sheet); _update_status(f"[PRODUCT] Cleared | {_MIDI_HELP_PRODUCT}"); return
-    elif _current_mode == "ml_system_design":
-        if _ai_system_results_shown:
-            _ai_system_results_shown, _ai_system_view_mode = False, 0
-            _ai_system_full_sections = ai_system_cheat_sheet
-            _ai_system_diagram_path, _ai_system_diagram_status, _ai_system_diagram_started_at = None, "idle", None
-            ui_update_sections(ai_system_cheat_sheet); _update_status(f"[AI SYSTEM] Cleared | {_MIDI_HELP_AI_SYSTEM}"); return
     elif _current_mode == "pair":
         pair_process_context(); return
     elif _current_mode == "behavioral_pair":

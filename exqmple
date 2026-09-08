@@ -1,0 +1,8 @@
+dropbox clone
+
+functional requirements:
+install an application on the host and:
+you have a "synced" folder
+can drop a file from a desktop computer into that folder and it:
+will be synced across all active "synced" desktop computers
+changes, deletions etc. are all synced
