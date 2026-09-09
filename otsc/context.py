@@ -14,7 +14,11 @@ from otsc.privacy import redact
 def normalize_screen(text: str) -> str:
     text = re.sub(r"\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)\b", "[clock]", text, flags=re.I)
     text = re.sub(r"(?im)(\bclock\s+)\d{1,2}:\d{2}(?::\d{2})?\b", r"\1[clock]", text)
-    return "\n".join(" ".join(line.split()) for line in text.splitlines() if line.strip())
+    return "\n".join(
+        " " * (len(line.expandtabs(4)) - len(line.expandtabs(4).lstrip())) + " ".join(line.split())
+        for line in text.splitlines()
+        if line.strip()
+    )
 
 
 @dataclass(frozen=True)

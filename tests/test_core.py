@@ -19,6 +19,11 @@ def response(snapshot, summary="A useful response"):
 
 
 class ContextTests(unittest.TestCase):
+    def test_indentation_changes_are_meaningful_screen_changes(self):
+        c = ContextStore()
+        c.add("screen", "file.py\n    return value", "screen")
+        self.assertIsNotNone(c.add("screen", "file.py\n        return value", "screen"))
+
     def test_a_code_slice_is_not_mistaken_for_a_changing_clock(self):
         c = ContextStore()
         c.add("screen", "values[1:20]", "screen")

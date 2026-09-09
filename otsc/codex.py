@@ -62,7 +62,7 @@ class CodexProvider:
             work.mkdir(mode=0o700)
             materialize_snapshot(work, files)
             schema, output = directory / "schema.json", directory / "response.json"
-            private_write(schema, json.dumps(response_schema()))
+            private_write(schema, json.dumps(response_schema(lane)))
             command = codex_command(executable, work, schema, output, self.choice)
             picture = latest_image(snapshot, self.choice.send_images)
             if picture:
@@ -130,7 +130,7 @@ class CodexProvider:
                         raise RuntimeError("Codex did not complete: " + redact(errors.read()[-700:]))
                     if output.stat().st_size > 200000:
                         raise RuntimeError("Codex response exceeded the app's size limit")
-                    result = parse_response(output.read_text()).validate_sources(snapshot.observations, files)
+                    result = parse_response(output.read_text(), lane).validate_sources(snapshot.observations, files)
                     return derive_patches(result, files)
                 finally:
                     timeout.cancel()

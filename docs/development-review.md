@@ -14,6 +14,15 @@ These are **assistant-authored engineering critiques and synthetic checks**, not
 | A model-generated diff could fail to match the input file | Artifact correctness | Host-generated diffs; actual `git apply --check` and application in temporary fixtures |
 | First diagram render placed opposing edges and labels on top of each other | Presentation | Direction-aware routes and label placement; native render inspected after correction |
 | Credentials, symlinks, or ignored files could enter a project snapshot | Context privacy | Bounded source filter, symlink rejection, secret exclusions, fixture tests |
+| A real fast-model response generated code but missed teaching annotations | Responsiveness / output contract | Restrict quick responses to a small answer-only schema; a subsequent real run returned valid help in 5.2 seconds |
+| A brief follow-up erased the prior code while deep work ran | Artifact continuity | Retain the current task's displayed artifact separately from the short response; checked in the live AppKit workflow |
+| Editor gutters could become part of the reconstructed source | Grounding | Separate aligned line numbers, retain the detected range, and preserve indentation; tested with real OCR |
+| A real retry proposal used `>= 500`, implicitly assuming valid HTTP status codes | Input-domain assumptions | State the malformed-input requirement explicitly; the resulting bounded predicate passed ten cases including 499, 500, 599, and 600 |
+| Help now could miss speech still in the current capture chunk | Context freshness | Wake audio capture immediately, wait for queued transcripts, and refresh the screen before starting the requested answer |
+
+## Completed live examples
+
+The staged code/speech workflow completed twice with real OCR, local ASR, and real Codex quick/deep models. Quick responses arrived in 4.72 and 5.41 seconds; deep artifacts in 14.01 and 13.71 seconds. The input was a deliberately staged helper and generated conversation, not an unscripted user session. Separate checks exercised native microphone/system capture and a real design response. These observations establish working paths and specific failures fixed; they do not establish a general quality score or human agreement rate.
 
 ## First live review corpus
 

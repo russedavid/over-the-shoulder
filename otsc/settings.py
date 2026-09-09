@@ -57,9 +57,15 @@ class ModelChoice(BaseModel):
 class Settings(BaseModel):
     configured: bool = False
     quick: ModelChoice = Field(
-        default_factory=lambda: ModelChoice(provider="openai", model="gpt-5.4-mini", max_tokens=1800)
+        default_factory=lambda: ModelChoice(
+            provider="codex", model="gpt-5.3-codex-spark", reasoning="low", max_tokens=1800
+        )
     )
-    deep: ModelChoice = Field(default_factory=lambda: ModelChoice(provider="codex", max_tokens=10000))
+    deep: ModelChoice = Field(
+        default_factory=lambda: ModelChoice(
+            provider="codex", model="gpt-5.5", reasoning="low", send_images=True, max_tokens=10000
+        )
+    )
     transcription: Literal["disabled", "local", "groq", "openai"] = "disabled"
     transcription_model: str = ""
     local_asr_model: str = "mlx-community/parakeet-tdt-0.6b-v3"

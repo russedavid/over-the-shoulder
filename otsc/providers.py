@@ -27,7 +27,7 @@ def latest_image(snapshot, enabled):
     return None
 
 
-def make_request(choice, prompt, key, image_data=None):
+def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
     provider, root = choice.provider, choice.endpoint()
     if not choice.model.strip():
         raise ValueError(f"Choose a model for {provider} in Settings")
@@ -47,7 +47,7 @@ def make_request(choice, prompt, key, image_data=None):
             "store": False,
             "max_output_tokens": choice.max_tokens,
             "text": {
-                "format": {"type": "json_schema", "name": "assistance", "strict": True, "schema": response_schema()}
+                "format": {"type": "json_schema", "name": "assistance", "strict": True, "schema": response_schema(lane)}
             },
         }
         if choice.reasoning:
@@ -64,7 +64,7 @@ def make_request(choice, prompt, key, image_data=None):
             "generationConfig": {
                 "maxOutputTokens": choice.max_tokens,
                 "responseMimeType": "application/json",
-                "responseJsonSchema": response_schema(),
+                "responseJsonSchema": response_schema(lane),
             },
         }
         model = quote(choice.model.removeprefix("models/"), safe="")
@@ -86,7 +86,7 @@ def make_request(choice, prompt, key, image_data=None):
                 {
                     "name": "submit_assistance",
                     "description": "Return the task assistance to the desktop app.",
-                    "input_schema": response_schema(),
+                    "input_schema": response_schema(lane),
                 }
             ],
             "tool_choice": {"type": "tool", "name": "submit_assistance"},
@@ -176,7 +176,9 @@ class HTTPProvider:
             raise ValueError(f"Add the {lane} {self.choice.provider} API key in Settings")
         files = verified_from_snapshot(snapshot)
         prompt = build_prompt(snapshot, lane, verified_files=files)
-        url, headers, body = make_request(self.choice, prompt, key, latest_image(snapshot, self.choice.send_images))
+        url, headers, body = make_request(
+            self.choice, prompt, key, latest_image(snapshot, self.choice.send_images), lane=lane
+        )
         text, preview = "", ""
         with httpx.Client(
             timeout=httpx.Timeout(90, connect=15), transport=self.transport, follow_redirects=False
@@ -200,7 +202,7 @@ class HTTPProvider:
                         preview = current
                         progress("Draft: " + preview)
         token.check()
-        result = parse_response(text).validate_sources(snapshot.observations, files)
+        result = parse_response(text, lane).validate_sources(snapshot.observations, files)
         return derive_patches(result, files)
 
 

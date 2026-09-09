@@ -1,5 +1,8 @@
+import queue
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -7,6 +10,69 @@ from unittest.mock import patch
 
 @unittest.skipUnless(sys.platform == "darwin", "Native capture adapters require macOS")
 class CaptureTests(unittest.TestCase):
+    def test_help_flush_delivers_current_speech_before_signalling_readiness(self):
+        import numpy as np
+
+        from otsc.capture import AudioCapture
+        from otsc.settings import Settings
+
+        events = queue.Queue()
+        started, release = threading.Event(), threading.Event()
+
+        class Transcriber:
+            def transcribe(self, samples):
+                started.set()
+                release.wait(2)
+                return "What about the question I just asked?"
+
+        capture = AudioCapture(Settings(transcription="local"), events)
+        capture.transcriber = Transcriber()
+        try:
+            capture.start()
+            with capture.mic_lock:
+                capture.mic_chunks.append(np.full(8000, 0.1, dtype=np.float32))
+            request = capture.flush_for_help()
+            self.assertTrue(started.wait(1))
+            received = []
+            while not events.empty():
+                received.append(events.get_nowait())
+            self.assertFalse(any(e["type"] == "audio_flushed" for e in received))
+            release.set()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                event = events.get(timeout=2)
+                received.append(event)
+                if event["type"] == "audio_flushed":
+                    self.assertEqual(event["flush_id"], request)
+                    self.assertTrue(event["complete"])
+                    break
+            types = [e["type"] for e in received]
+            self.assertLess(types.index("speech"), types.index("audio_flushed"))
+        finally:
+            release.set()
+            capture.stop()
+
+    def test_ocr_separates_editor_line_numbers_from_the_actual_code(self):
+        from PIL import Image, ImageDraw, ImageFont
+
+        from otsc.capture import ScreenCapture
+
+        image = Image.new("RGB", (1000, 250), "white")
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.truetype("/System/Library/Fonts/Menlo.ttc", 25)
+        for text, x, y in [
+            ("stats.py", 24, 15),
+            ("1", 24, 65),
+            ("def mean(values):", 90, 65),
+            ("2", 24, 110),
+            ("return sum(values) / len(values)", 150, 110),
+        ]:
+            draw.text((x, y), text, font=font, fill="black")
+        text, _ = ScreenCapture().interpret(image)
+        self.assertIn("def mean(values):", text)
+        self.assertNotIn("1 def", text)
+        self.assertIn("Detected editor line numbers: 1–2", text)
+
     def test_actual_ocr_on_synthetic_code_without_desktop_capture(self):
         from PIL import Image, ImageDraw, ImageFont
 

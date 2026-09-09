@@ -187,14 +187,24 @@ class Assistance(Record):
         return self
 
 
-def response_schema() -> dict:
-    return Assistance.model_json_schema()
+class QuickAssistance(Record):
+    task: str
+    summary: str
+    conversation: list[ConversationResponse] = Field(max_length=1)
+    open_questions: list[str] = Field(max_length=1)
 
 
-def parse_response(text: str) -> Assistance:
+def response_schema(lane="deep") -> dict:
+    return (QuickAssistance if lane == "quick" else Assistance).model_json_schema()
+
+
+def parse_response(text: str, lane="deep") -> Assistance:
     # Accept a single fenced JSON object, not arbitrary prose containing convenient braces.
     text = text.strip()
     if text.startswith("```json\n") and text.endswith("```"):
         text = text[8:-3].strip()
     data = json.loads(text)
+    if lane == "quick":
+        quick = QuickAssistance.model_validate(data)
+        return Assistance(**quick.model_dump(), artifacts=[], observed_files=[])
     return Assistance.model_validate(data)

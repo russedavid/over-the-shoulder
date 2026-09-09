@@ -10,26 +10,26 @@ macOS 13 or later, Python 3.13, and [uv](https://docs.astral.sh/uv/). Screen OCR
 
 ```sh
 uv sync --python 3.13 --extra mac
-uv run --extra mac otsc
+python ots.py
 ```
 
-On this checkout you can also double-click **Over The Shoulder Coder.command**. The former `test.py` and `lib/main.py` entry points launch this same application without starting anything when imported.
+`ots.py` uses this checkout's `.venv` automatically, so there is no activation step. The former `test.py` and `lib/main.py` entry points launch the same application without starting anything when imported.
 
-To try the complete interaction without credentials or capture, double-click **Demo.command**, or run:
+To try the interaction without credentials or capture:
 
 ```sh
-uv run --extra mac otsc --demo
-uv run --extra mac otsc --design-demo
+python ots.py --demo
+python ots.py --design-demo
 ```
 
 These are explicitly synthetic examples. The app menu can load either example; they exercise the same response and rendering paths as live assistance. Quit and relaunch normally to leave the synthetic demo.
 
 ## Configure once, then work
 
-On first launch, Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Google Gemini, Anthropic, Groq, or an OpenAI-compatible endpoint. API model names are editable. Codex uses your existing CLI sign-in; API keys are saved in macOS Keychain. A blank key field preserves an existing key. Standard provider environment variables are also supported.
+Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Google Gemini, Anthropic, Groq, or an OpenAI-compatible endpoint. The defaults use Codex Spark for quick replies and GPT-5.5 for deeper work through the existing Codex sign-in. Model names remain editable. API keys are saved in macOS Keychain; a blank key field preserves an existing key. Standard provider environment variables are also supported.
 
 1. Describe the task, or let the captured work establish it. You can add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt.
-2. **Capture now** reads the screen. **Help now** (Cmd-Return) asks for assistance from the current context. **Start following** captures and checks for changes every 30 seconds by default.
+2. **Capture now** reads the screen. **Help now** (Cmd-Return) refreshes the screen and finishes the current speech chunk before asking for assistance. **Start following** captures and checks for changes every 30 seconds by default.
 3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Diagrams export as SVG and code changes as diffs.
 4. **Pin** protects work you are reading. Selecting output text also holds incoming replacements. Cmd-Shift-I toggles click-through; clicking the app's Dock icon restores interaction.
 
@@ -51,6 +51,8 @@ Observed files are bounded, versioned **fragments**, with source observations an
 
 Quick and deep work begin from the same snapshot. A newer request supersedes older work; a late quick response cannot overwrite deep output. New capture/audio arriving during an active response is queued for the next snapshot, avoiding endless cancellation during conversation. Help now promotes the latest queued context immediately. Repeated screen text and minor visual changes do not automatically regenerate the answer. Resizing and copying never invoke a model.
 
+Quick replies answer the pressing question without generating a second code proposal. Existing artifacts stay visible during those replies; deeper work supplies the annotated code, diff, or drawing. Editor line numbers are separated from source code during OCR, and indentation changes count as meaningful changes.
+
 The hourly assistance limit counts requests (each can use two models), not dollars or transcription calls. Provider quotas still apply. Failed requests show their error and retain existing work; the app does not silently retry or switch providers.
 
 ## Verification and implementation
@@ -58,10 +60,12 @@ The hourly assistance limit counts requests (each can use two models), not dolla
 ```sh
 uv run --extra mac python -m unittest discover -s tests -v
 uvx ruff check otsc tests
-uv run --extra mac otsc --smoke-test /tmp/otsc-smoke
+python ots.py --smoke-test /tmp/otsc-smoke
 ```
 
 Core tests can run outside macOS with `uv sync --extra test`. The native smoke test exercises synthetic quick/deep responses, annotations, clean copy, collaborator replies, excerpt diffs, resizing, selection, click-through, audio queuing, diagrams, and settings construction. It renders only the app's own views under `/tmp`; it does not capture the desktop. Test reports distinguish these checks from live provider, permission, and acoustic testing.
+
+An explicit live run is available with `.venv/bin/python tests/live_workflow.py`. It uses a staged code window, locally generated speech, the real local recognizer, and real Codex requests, then verifies the result in the AppKit window. It requires the local-ASR extra, cached speech weights, Codex sign-in, and screen-recording permission. It is not part of the ordinary offline test suite.
 
 - [Current implementation and verification boundaries](docs/implementation.md)
 - [Response contract](docs/assistance-contract.md)

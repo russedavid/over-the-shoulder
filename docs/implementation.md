@@ -36,14 +36,27 @@ Automated tests exercise source provenance, code annotation coverage, same-scree
 
 The native smoke test creates an AppKit window using synthetic responses, resizes it, checks selection and clean copy, toggles click-through, reads collaborator replies, selects an excerpt diff, checks queued audio, draws a diagram, and constructs Settings. View renders and reports are written outside the repository. These tests use no paid model calls or live desktop/audio recording.
 
-## Still requires live acceptance
+## Live behavior verified
 
-- First-run macOS permissions and actual microphone/system-audio routing on the user's setup, including echo and overlapping speech.
-- Live API/Codex account authentication, model-specific structured-output support, latency, quotas, and quality. Adapters have mocked transport coverage; this is not a live provider certification.
-- Optional local ASR model download and transcription on actual audio. Its large optional dependencies were not installed as part of the default setup.
-- More realistic screen/OCR inputs, dense code views, screenshots containing diagrams without much text, and long collaborative tasks. The current frame gate is a conservative heuristic, not a learned task-change detector.
+The Terminal launch has screen-capture and microphone permission. The actual `AudioCapture` class started microphone and system audio together and received frames from both. Ambient audio from that check was neither saved nor transmitted. Separately, a generated question played through system audio was captured by ScreenCaptureKit and correctly recognized by the local Parakeet model.
 
-The owner has deferred `.app` packaging. The Python entry point and `.command` launchers are the current run paths; distribution work is outside the active scope.
+Local speech recognition is installed and uses the previously cached Parakeet weights. A generated question and reply were recognized correctly; the first transcription took 5.7 seconds including loading, and the next took 0.06 seconds. These are individual short examples, not general performance benchmarks.
+
+`tests/live_workflow.py` runs the actual AppKit controller with a staged source window, local speech transcription through the normal per-channel queues, and real Codex requests. Two completed runs returned quick help in 4.72/5.41 seconds and the deeper annotated code in 14.01/13.71 seconds. Both answered the other participant's suggestion, kept missing data distinct from zero, supplied an observed-excerpt diff, and retained the artifact during a short follow-up. Raw captures, speech, model responses, and timings remain outside the repository.
+
+A separate real design request returned a 16-node/21-edge webhook-delivery diagram and challenged immediate retries with backoff, jitter, throttling, and duplicate protection. A connected-project request returned a host-calculated patch that passed `git apply --check`, while the original selected file remained unchanged.
+
+When malformed status values were explicitly included in that fixture's requirements, its generated retry predicate used the exact 500–599 bounds. The reviewed patch was applied only in a temporary fixture and passed ten behavioral cases. Help now also has a regression check ensuring newly flushed speech arrives before audio readiness is signaled; microphone/system buffers cover the longest configurable chunk.
+
+The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. The current automated suite has 29 passing tests; the native smoke check also passes.
+
+The current local preferences use Codex Spark / GPT-5.5, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed.
+
+## Practical limits
+
+Other HTTP providers have mocked protocol coverage; their accounts, model support, and quotas were not certified by these Codex runs. Echo, overlapping remote speakers, long sessions, and dense multi-window OCR still need broader field evaluation. The frame gate remains a heuristic. The local ASR installation was exercised on this Apple Silicon Mac; it is an optional dependency for other setups.
+
+The owner has deferred `.app` packaging. Run `python ots.py`; it uses the project's environment automatically. Distribution work is outside the active scope.
 
 No public portfolio release or push was performed. Clean publication of the old capture-bearing history remains a separate release task.
 

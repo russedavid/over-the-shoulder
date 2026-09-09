@@ -2,6 +2,7 @@
 
 import io
 import queue
+import re
 import shutil
 import tempfile
 import threading
@@ -40,9 +41,36 @@ class ScreenCapture:
             if text.strip():
                 key = (data["block_num"][index], data["par_num"][index], data["line_num"][index])
                 rows.setdefault(key, []).append(index)
+        # Separate an aligned editor gutter from the code it numbers. Keep its range
+        # as evidence, rather than making line numbers look like Python/JS source.
+        numbered = []
+        for key, indices in rows.items():
+            first = indices[0]
+            if len(indices) > 1 and data["text"][first].isdigit():
+                next_word = indices[1]
+                if data["left"][next_word] - data["left"][first] - data["width"][first] >= 8:
+                    numbered.append((key, int(data["text"][first]), data["left"][first]))
+        all_text = " ".join(data["text"])
+        gutter = set()
+        code_left = 0
+        if (
+            len(numbered) >= 2
+            and re.search(r"\b[\w-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|c|cpp|rb|swift)\b", all_text)
+            and re.search(r"\b(?:def|return|class|function|const|import|public|fn)\b", all_text)
+            and max(n[2] for n in numbered) - min(n[2] for n in numbered) < 12
+            and all(b[1] == a[1] + 1 for a, b in zip(numbered, numbered[1:]))
+        ):
+            gutter = {n[0] for n in numbered}
+            code_left = min(data["left"][rows[key][1]] for key in gutter)
         lines, draw = [], ImageDraw.Draw(image)
-        for indices in rows.values():
-            text = " ".join(data["text"][i] for i in indices)
+        for key, indices in rows.items():
+            words = indices[1:] if key in gutter else indices
+            text = " ".join(data["text"][i] for i in words)
+            if key in gutter:
+                first = words[0]
+                character_width = data["width"][first] / max(1, len(data["text"][first]))
+                indent = round((data["left"][first] - code_left) / max(1, character_width))
+                text = " " * min(40, max(0, indent)) + text
             cleaned = redact(text)
             lines.append(cleaned)
             if cleaned != text:
@@ -60,6 +88,10 @@ class ScreenCapture:
 
         visual = hashlib.sha256(self.signature.encode()).hexdigest()[:12]
         text = "\n".join(lines) or "No legible text detected. The image may contain a diagram or non-text content."
+        if gutter:
+            text += (
+                f"\n[Detected editor line numbers: {numbered[0][1]}–{numbered[-1][1]}; spacing reconstructed by OCR.]"
+            )
         text += "\n[Visual layout reference: " + visual + "]"
         path = ""
         if keep_image:
@@ -100,7 +132,8 @@ def make_system_audio():
             def init(self):
                 self = objc.super(OTSCSystemAudioDelegate, self).init()
                 if self is not None:
-                    self.chunks = deque(maxlen=600)
+                    self.chunks = deque()
+                    self.sample_count = 0
                     self.lock = threading.Lock()
                 return self
 
@@ -114,7 +147,11 @@ def make_system_audio():
                 status, data = CoreMedia.CMBlockBufferCopyDataBytes(block, 0, length, None)
                 if status == 0:
                     with self.lock:
-                        self.chunks.append(np.frombuffer(data, dtype=np.float32).copy())
+                        samples = np.frombuffer(data, dtype=np.float32).copy()
+                        self.chunks.append(samples)
+                        self.sample_count += samples.size
+                        while self.sample_count > 16000 * 25 and self.chunks:
+                            self.sample_count -= self.chunks.popleft().size
 
         Delegate = OTSCSystemAudioDelegate
 
@@ -164,6 +201,7 @@ def make_system_audio():
             with self.delegate.lock:
                 chunks = list(self.delegate.chunks)
                 self.delegate.chunks.clear()
+                self.delegate.sample_count = 0
             return np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
 
         def stop(self):
@@ -235,7 +273,10 @@ class AudioCapture:
         self.settings, self.events = settings.model_copy(deep=True), events
         self.transcriber = Transcriber(self.settings, credentials)
         self.stop_event = threading.Event()
-        self.mic_chunks, self.mic_lock = deque(maxlen=200), threading.Lock()
+        self.wake = threading.Event()
+        self.flush_lock = threading.Lock()
+        self.flush_request = None
+        self.mic_chunks, self.mic_lock = deque(maxlen=384), threading.Lock()
         self.mic = self.system = None
         self.queues = {channel: queue.Queue(maxsize=3) for channel in ("microphone", "system")}
         self.id = uuid4().hex
@@ -246,6 +287,13 @@ class AudioCapture:
                 raise ValueError("Choose a transcription provider before enabling audio")
             return
         threading.Thread(target=self._run, name="otsc-audio-capture", daemon=True).start()
+
+    def flush_for_help(self):
+        request_id = uuid4().hex
+        with self.flush_lock:
+            self.flush_request = request_id
+        self.wake.set()
+        return request_id
 
     def _run(self):
         import numpy as np
@@ -275,7 +323,13 @@ class AudioCapture:
             if self.stop_event.is_set():
                 return
             self.events.put({"type": "audio_status", "capture_id": self.id, "message": "Audio capture is active."})
-            while not self.stop_event.wait(self.settings.audio_chunk_seconds):
+            while not self.stop_event.is_set():
+                self.wake.wait(self.settings.audio_chunk_seconds)
+                self.wake.clear()
+                if self.stop_event.is_set():
+                    break
+                with self.flush_lock:
+                    flush_id, self.flush_request = self.flush_request, None
                 with self.mic_lock:
                     chunks = list(self.mic_chunks)
                     self.mic_chunks.clear()
@@ -296,6 +350,23 @@ class AudioCapture:
                                 "message": f"{channel} transcription is behind; a chunk was skipped.",
                             }
                         )
+                if flush_id:
+                    deadline = time.monotonic() + 30
+                    while (
+                        any(q.unfinished_tasks for q in self.queues.values())
+                        and time.monotonic() < deadline
+                        and not self.stop_event.is_set()
+                    ):
+                        self.stop_event.wait(0.02)
+                    self.events.put(
+                        {
+                            "type": "audio_flushed",
+                            "capture_id": self.id,
+                            "flush_id": flush_id,
+                            "complete": not any(q.unfinished_tasks for q in self.queues.values())
+                            and not self.stop_event.is_set(),
+                        }
+                    )
         except Exception as error:
             self.events.put({"type": "audio_error", "capture_id": self.id, "message": redact(str(error))})
         finally:
@@ -330,6 +401,9 @@ class AudioCapture:
             except Exception as error:
                 self.events.put({"type": "audio_error", "capture_id": self.id, "message": redact(str(error))})
                 self.stop_event.set()
+            finally:
+                self.queues[channel].task_done()
 
     def stop(self):
         self.stop_event.set()
+        self.wake.set()

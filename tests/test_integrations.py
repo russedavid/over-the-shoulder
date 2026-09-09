@@ -36,11 +36,37 @@ def sample_response(snapshot):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_quick_contract_is_small_and_cannot_generate_an_unannotated_artifact(self):
+        from otsc.models import parse_response, response_schema
+
+        schema = response_schema("quick")
+        self.assertNotIn("artifacts", schema["properties"])
+        self.assertNotIn("observed_files", schema["properties"])
+        result = parse_response(
+            json.dumps(
+                {
+                    "task": "Fix it",
+                    "summary": "Keep missing values distinct from zero.",
+                    "conversation": [],
+                    "open_questions": [],
+                }
+            ),
+            "quick",
+        )
+        self.assertEqual(result.artifacts, [])
+        with self.assertRaises(ValueError):
+            parse_response(
+                json.dumps(
+                    {"task": "Fix it", "summary": "Fix it", "conversation": [], "open_questions": [], "artifacts": []}
+                ),
+                "quick",
+            )
+
     def test_all_http_providers_stream_into_the_same_validated_contract(self):
         context = ContextStore()
         context.set_goal("Handle missing data")
         snapshot = context.snapshot()
-        payload = sample_response(snapshot).model_dump_json()
+        payload = sample_response(snapshot).model_dump_json(exclude={"artifacts", "observed_files"})
         for provider in ("openai", "gemini", "anthropic", "groq", "compatible"):
             with self.subTest(provider=provider):
                 choice = ModelChoice(provider=provider, model="test-model", base_url="https://example.test/v1")

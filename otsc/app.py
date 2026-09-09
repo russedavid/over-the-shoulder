@@ -100,9 +100,13 @@ class Controller(NSObject):
         self.capture_generation = 0
         self.capture_request_after = False
         self.pending_manual = False
+        self.manual_help_pending = False
+        self.awaiting_audio_flush = None
         self.buffered_context = []
         self.next_capture = 0
         self.selected_id = ""
+        self.displayed_artifacts = []
+        self.artifact_context = None
         self.preferences = None
         self.closed = False
         self.smoke_step = 0
@@ -305,10 +309,23 @@ class Controller(NSObject):
         if not self.demo and not self.settings.configured:
             self.settings_(None)
             return
-        if self.capture_busy:
-            self.capture_request_after = True
-            self.pending_manual = True
-        else:
+        if self.demo:
+            self.coordinator.request(manual=True)
+            return
+        self.coordinator.cancel()
+        self.manual_help_pending = True
+        self.pending_manual = True
+        self.awaiting_audio_flush = None
+        if self.audio and not self.audio.stop_event.is_set() and self.settings.transcription != "disabled":
+            self.awaiting_audio_flush = self.audio.flush_for_help()
+        self.capture_context(request_after=False)
+
+    @objc.python_method
+    def send_manual_help_if_ready(self):
+        if self.manual_help_pending and not self.capture_busy and self.awaiting_audio_flush is None:
+            self.manual_help_pending = False
+            self.pending_manual = False
+            self.flush_context()
             self.coordinator.request(manual=True)
 
     def addContext_(self, sender):
@@ -369,6 +386,8 @@ class Controller(NSObject):
         self.capture_generation += 1
         self.capture_request_after = False
         self.pending_manual = False
+        self.manual_help_pending = False
+        self.awaiting_audio_flush = None
         self.flush_context()
         if self.audio:
             self.audio.stop()
@@ -455,11 +474,19 @@ class Controller(NSObject):
                 self.handle_event(event)
         if self.running and time.monotonic() >= self.next_capture:
             self.next_capture = time.monotonic() + self.settings.interval_seconds
-            if self.demo:
+            if self.manual_help_pending:
+                pass
+            elif self.demo:
                 self.coordinator.request()
             else:
                 self.capture_context(request_after=True)
-        if self.running and self.buffered_context and not self.coordinator.active_lanes and not self.capture_busy:
+        if (
+            self.running
+            and self.buffered_context
+            and not self.coordinator.active_lanes
+            and not self.capture_busy
+            and not self.manual_help_pending
+        ):
             self.flush_context()
             self.coordinator.request()
         if self.options.smoke_test:
@@ -484,21 +511,34 @@ class Controller(NSObject):
             self.status.setStringValue_(
                 event.get("error") or event.get("files_message") or "Current screen added to context."
             )
-            should_request, manual = self.capture_request_after, self.pending_manual
-            self.capture_request_after = self.pending_manual = False
-            if should_request and (manual or not self.coordinator.active_lanes):
+            should_request = self.capture_request_after
+            self.capture_request_after = False
+            if self.manual_help_pending:
+                self.send_manual_help_if_ready()
+            elif should_request and not self.coordinator.active_lanes:
                 self.flush_context()
-                self.coordinator.request(manual=manual)
+                self.coordinator.request()
             self.refresh_body()
         elif kind == "project":
             if event["generation"] == self.capture_generation:
                 self.context.set_verified_files(event["root"], event["files"])
                 self.status.setStringValue_(event["message"])
                 self.refresh_body()
-        elif kind in {"speech", "audio_status", "audio_error"}:
+        elif kind in {"speech", "audio_status", "audio_error", "audio_flushed"}:
             if not self.audio or self.audio.id != event["capture_id"]:
                 return
-            if kind == "speech":
+            if kind == "audio_flushed":
+                if event["flush_id"] == self.awaiting_audio_flush:
+                    self.awaiting_audio_flush = None
+                    if not event["complete"]:
+                        self.manual_help_pending = False
+                        self.pending_manual = False
+                        self.status.setStringValue_(
+                            "Recent speech could not be finished. Check the audio settings; the current screen is still available."
+                        )
+                    else:
+                        self.send_manual_help_if_ready()
+            elif kind == "speech":
                 if self.coordinator.active_lanes:
                     self.buffered_context.append(event)
                     self.buffered_context = self.buffered_context[-80:]
@@ -507,11 +547,24 @@ class Controller(NSObject):
                 self.status.setStringValue_(f"Heard {event['speaker']} through {event['channel']}. Context updated.")
                 self.refresh_body()
             else:
+                if kind == "audio_error":
+                    self.manual_help_pending = False
+                    self.pending_manual = False
+                    self.awaiting_audio_flush = None
                 self.status.setStringValue_(event["message"])
         elif kind == "started":
             self.status.setStringValue_(f"Quick and deep assistance started · context {event['revision']}.")
         elif kind == "progress" and event["request_id"] == self.coordinator.request_id:
             self.status.setStringValue_(event["lane"].capitalize() + ": " + event["message"][:280])
+            if (
+                event["lane"] == "quick"
+                and event["message"].startswith("Draft: ")
+                and not self.coordinator.pinned
+                and not self.summary.selectedRange().length
+                and self.coordinator.published_lane < 1
+                and self.context.revision == self.coordinator.last_requested_revision
+            ):
+                retain_text(self.summary, "Quick thought\n\n" + event["message"][7:])
         elif kind in {"result", "error", "cancelled"}:
             if kind == "result" and (self.body.selectedRange().length or self.summary.selectedRange().length):
                 self.coordinator.pinned = True
@@ -559,21 +612,24 @@ class Controller(NSObject):
         if not response:
             return
         retain_text(self.summary, response.task + "\n\n" + response.summary)
+        task_key = (self.context.session_id, self.context.goal)
+        if response.artifacts:
+            self.displayed_artifacts = response.artifacts
+            self.artifact_context = task_key
+        elif self.artifact_context != task_key:
+            self.displayed_artifacts = []
         previous = self.selected_id
         self.artifacts.removeAllItems()
-        titles = [a.title for a in response.artifacts]
+        titles = [a.title for a in self.displayed_artifacts]
         self.artifacts.addItemsWithTitles_(titles or ["Conversation / next step"])
-        index = next((i for i, a in enumerate(response.artifacts) if a.id == previous), 0)
+        index = next((i for i, a in enumerate(self.displayed_artifacts) if a.id == previous), 0)
         self.artifacts.selectItemAtIndex_(index)
-        self.selected_id = response.artifacts[index].id if response.artifacts else ""
+        self.selected_id = self.displayed_artifacts[index].id if self.displayed_artifacts else ""
         self.refresh_body()
 
     @objc.python_method
     def current_artifact(self):
-        response = self.coordinator.current
-        if response:
-            return next((a for a in response.artifacts if a.id == self.selected_id), None)
-        return None
+        return next((a for a in self.displayed_artifacts if a.id == self.selected_id), None)
 
     @objc.python_method
     def refresh_body(self):
@@ -666,9 +722,8 @@ class Controller(NSObject):
         self.refresh_body()
 
     def chooseArtifact_(self, sender):
-        response = self.coordinator.current
-        if response and response.artifacts:
-            self.selected_id = response.artifacts[self.artifacts.indexOfSelectedItem()].id
+        if self.displayed_artifacts:
+            self.selected_id = self.displayed_artifacts[self.artifacts.indexOfSelectedItem()].id
         self.refresh_body()
 
     def togglePin_(self, sender):
@@ -740,6 +795,10 @@ class Controller(NSObject):
         self.coordinator.pinned = False
         self.coordinator.last_requested_revision = -1
         self.coordinator.history.clear()
+        self.displayed_artifacts = []
+        self.artifact_context = None
+        self.body.setSelectedRange_((0, 0))
+        self.summary.setSelectedRange_((0, 0))
         self.pin.setTitle_("Pin")
         self.selected_id = ""
         self.artifacts.removeAllItems()
@@ -750,6 +809,10 @@ class Controller(NSObject):
     @objc.python_method
     def load_demo(self, design):
         self.pause()
+        self.displayed_artifacts = []
+        self.artifact_context = None
+        self.body.setSelectedRange_((0, 0))
+        self.summary.setSelectedRange_((0, 0))
         self.demo = True
         self.context.set_repo("")
         self.coordinator.current = self.coordinator.pending = None

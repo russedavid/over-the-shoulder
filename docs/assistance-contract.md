@@ -6,6 +6,8 @@ The implemented contract lives in [`otsc/models.py`](../otsc/models.py). Pydanti
 
 An `Assistance` contains `task`, `summary`, `conversation`, `artifacts`, `observed_files`, and `open_questions`. A conversation response cites its observation and records an action: answer, acknowledge, challenge, clarify, or defer. Its `artifact_effect` explains how the contribution affects the proposal. A response can answer a technology question without creating an artifact.
 
+The quick model uses a smaller `QuickAssistance` schema: task, summary, at most one conversation response, and at most one open question. It is normalized into the common response object with empty artifact/file arrays. It receives recent observations from the same snapshot; deeper work also receives the full bounded workspace and artifact context. A quick reply leaves the current task's displayed artifact available.
+
 Observations record kind, channel, configured speaker role, time, confidence, and a stable ID. Both inference lanes receive the same snapshot of these observations, previous work, unresolved questions, observed fragments, and any selected project files.
 
 ## Code, diffs, and diagrams
@@ -25,7 +27,7 @@ Every artifact cites observations from its request. Observed-file content must o
 1. One request starts independent quick and deep workers from one immutable snapshot.
 2. Streaming APIs can expose a provisional summary. Only a validated complete response enters the artifact view.
 3. Deep output can replace quick output; late quick output cannot replace deep output.
-4. New automatic observations queue while that request finishes. Manual Help now uses the latest context and supersedes prior work. Session/request/revision checks reject stale responses.
+4. New automatic observations queue while that request finishes. Manual Help now refreshes the screen, flushes captured audio, waits for its transcripts, and supersedes prior work. Session/request/revision checks reject stale responses.
 5. Pinning or selecting text holds replacements. Unpinning discards a pending result if its context has since become stale.
 6. Views retain their text state. Resize, view selection, annotation toggles, export, and copy reuse existing artifacts. Recent accepted artifacts remain available in History.
 
