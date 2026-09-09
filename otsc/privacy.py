@@ -2,6 +2,7 @@
 
 import os
 import re
+import tempfile
 from pathlib import Path
 
 SECRET_PATTERNS = (
@@ -38,3 +39,18 @@ def private_write(path: Path, data: str | bytes) -> None:
     with os.fdopen(fd, "wb") as stream:
         stream.write(data.encode() if isinstance(data, str) else data)
     path.chmod(0o600)
+
+
+def atomic_private_write(path: Path, data: str | bytes) -> None:
+    """Replace an app-owned checkpoint only after its complete contents reach disk."""
+    private_directory(path.parent)
+    fd, temporary = tempfile.mkstemp(prefix=".otsc-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data.encode() if isinstance(data, str) else data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        path.chmod(0o600)
+    finally:
+        Path(temporary).unlink(missing_ok=True)

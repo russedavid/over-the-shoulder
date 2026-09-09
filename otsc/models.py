@@ -194,17 +194,53 @@ class QuickAssistance(Record):
     open_questions: list[str] = Field(max_length=1)
 
 
+def normalize_optional_file_metadata(response, observations, verified_files, progress=None):
+    """Keep valid proposals when redundant file metadata has no valid file identity.
+
+    This only omits entries whose content is already corroborated by supplied
+    evidence. Unknown paths, invented contents, and unknown citations still fail.
+    """
+    from otsc.telemetry import record_progress
+
+    sources = {o.id: o for o in observations}
+    retained = []
+    for item in response.observed_files:
+        known = bool(item.source_ids) and set(item.source_ids) <= set(sources)
+        cited = [sources[key] for key in item.source_ids] if known else []
+        visual = bool(cited) and all(o.kind in {"screen", "file"} for o in cited)
+        visible = " ".join(" ".join(o.text.split()) for o in cited)
+        content = " ".join(item.content.split())
+        reason = None
+        if not item.path and visual and content and content in visible:
+            reason = "unnamed_fragment_already_in_observations"
+        elif known and not visual and item.path in verified_files and item.content == verified_files[item.path]:
+            reason = "verified_file_already_supplied_separately"
+        if reason:
+            record_progress(progress, "file_metadata_omitted", reason=reason)
+        else:
+            retained.append(item)
+    response.observed_files = retained
+    return response
+
+
 def response_schema(lane="deep") -> dict:
     return (QuickAssistance if lane == "quick" else Assistance).model_json_schema()
 
 
 def parse_response(text: str, lane="deep") -> Assistance:
+    data = decode_json(text)
+    if lane == "quick":
+        quick = QuickAssistance.model_validate(data)
+        return Assistance(**quick.model_dump(), artifacts=[], observed_files=[])
+    return Assistance.model_validate(data)
+
+
+def decode_json(text: str) -> dict:
     # Accept a single fenced JSON object, not arbitrary prose containing convenient braces.
     text = text.strip()
     if text.startswith("```json\n") and text.endswith("```"):
         text = text[8:-3].strip()
     data = json.loads(text)
-    if lane == "quick":
-        quick = QuickAssistance.model_validate(data)
-        return Assistance(**quick.model_dump(), artifacts=[], observed_files=[])
-    return Assistance.model_validate(data)
+    if not isinstance(data, dict):
+        raise ValueError("Expected one structured response object")
+    return data

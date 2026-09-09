@@ -18,10 +18,14 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Native diagrams and SVG | `otsc/diagram.py` |
 | Original MIDI bindings and controller reconnection | `otsc/midi.py` |
 | Synthetic interaction replay | `otsc/demo.py` |
+| Explicit task details and private, opt-in checkpoints | `otsc/task_details.py`, `otsc/sessions.py` |
+| Optional bounded model-directed snapshot inspection | `otsc/inspection.py` |
+| Operational metadata, recovery checks, source review export | `otsc/telemetry.py`, `otsc/operations.py`, `otsc/release.py` |
+| Synthetic task corpus, behavioral checks, provisional semantic review | `evals/` |
 
 Codex runs `exec` against an ephemeral, filtered source snapshot, with read-only sandboxing, no approvals, no user config/rules, and no web search. It reuses CLI authentication. Responses API, Gemini `streamGenerateContent`, Anthropic Messages with a forced structured tool response, and Groq/compatible Chat Completions share the application contract. HTTP failures are surfaced without automatic provider fallback. No extra engine process or app-server migration was introduced.
 
-The Codex read-only sandbox is not a claim of complete filesystem read isolation. The supplied prompt prohibits external reads and execution; the host provides only the filtered snapshot and never applies edits to the real project. Stronger OS-level read isolation and a production threat review would be separate hardening work.
+The Codex adapter disables model-visible shell/executor, browser, image-read, app/connector, memory, and multi-agent capabilities, ignores user configuration/rules, and aborts unexpected tool activity. Inherited permission/session environment variables and environment API keys are removed from the child process. Optional app-level inspection tools read only the immutable supplied snapshot. The trusted CLI process retains its own authentication/runtime access; this is not complete OS isolation of a malicious CLI binary. See the [boundary review](threat-model.md).
 
 ## Capture and bounded work
 
@@ -35,7 +39,9 @@ Context retains up to 100 observations, a bounded set of observed fragments, pri
 
 Automated tests exercise source provenance, code annotation coverage, same-screen gating, revision isolation, quick/deep ordering, pin staleness, HTTP streaming adapters and errors, credential-free settings, source filtering, exact diff application in temporary fixtures, observed excerpt offsets, WAV construction, separate transcription credentials, native audio-buffer decoding, and real Tesseract OCR on a synthetic image.
 
-The native smoke test creates an AppKit window using synthetic responses, resizes it, checks selection and clean copy, toggles click-through, reads collaborator replies, selects an excerpt diff, checks queued audio, draws a diagram, and constructs Settings. View renders and reports are written outside the repository. These tests use no paid model calls or live desktop/audio recording.
+The native smoke test creates an AppKit window using synthetic responses, resizes it, checks selection and clean copy, toggles click-through, reads collaborator replies, selects an excerpt diff, checks queued audio, draws a diagram, constructs Settings, and saves/restores exact artifacts and constraints with capture paused. View renders and reports are written outside the repository. These tests use no model calls or live desktop/audio recording.
+
+Version 0.2 adds explicit task constraints/decisions, saved task sessions, metadata-only diagnostics, an optional bounded inspection loop, and a task-specific evaluation harness. Automatic session memory and inspection are off by default. Proposals retain the base hashes from their generation snapshot; loading a session cannot grant access to a new local project. A controlled recovery exercise verifies that provider failure preserves existing work and stale responses cannot replace it.
 
 ## Live behavior verified
 

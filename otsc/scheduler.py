@@ -10,6 +10,7 @@ from uuid import uuid4
 from otsc.context import ContextStore, Snapshot
 from otsc.models import Assistance
 from otsc.privacy import redact
+from otsc.telemetry import Progress, digest
 
 
 class Cancelled(Exception):
@@ -54,7 +55,7 @@ class Job:
 
 
 class Coordinator:
-    def __init__(self, context: ContextStore, provider_for_lane, *, hourly_limit=120):
+    def __init__(self, context: ContextStore, provider_for_lane, *, hourly_limit=120, trace=None):
         self.context, self.provider_for_lane = context, provider_for_lane
         self.events = queue.Queue()
         self.queues = {lane: queue.Queue(maxsize=1) for lane in ("quick", "deep")}
@@ -71,6 +72,8 @@ class Coordinator:
         self.calls = []
         self.hourly_limit = hourly_limit
         self.active_lanes = set()
+        self.trace = trace
+        self.artifact_bases = {}
         for lane in self.queues:
             threading.Thread(target=self._worker, args=(lane,), daemon=True, name="otsc-" + lane).start()
 
@@ -95,6 +98,16 @@ class Coordinator:
         self.calls.append(now)
         self.active_lanes = set(self.queues)
         self.events.put({"type": "started", "request_id": self.request_id, "revision": snapshot.revision})
+        if self.trace:
+            self.trace.record(
+                "request_started",
+                request_id=self.request_id,
+                session_id=snapshot.session_id,
+                revision=snapshot.revision,
+                observations=len(snapshot.observations),
+                files=len(json.loads(snapshot.verified_files)),
+                snapshot_hash=digest(snapshot.prompt_context()),
+            )
         for lane, pending in self.queues.items():
             token = Cancellation()
             self.tokens.append(token)
@@ -115,40 +128,102 @@ class Coordinator:
             try:
                 job.token.check()
                 provider = self.provider_for_lane(lane)
+                choice = getattr(provider, "choice", None)
+                fields = {
+                    "request_id": job.request_id,
+                    "session_id": job.snapshot.session_id,
+                    "revision": job.snapshot.revision,
+                    "lane": lane,
+                    "provider": getattr(choice, "provider", "synthetic"),
+                    "model": getattr(choice, "model", ""),
+                }
+                if self.trace:
+                    self.trace.record("generation_started", **fields)
+                progress = Progress(
+                    lambda text: self.events.put(
+                        {"type": "progress", "request_id": job.request_id, "lane": lane, "message": redact(text)}
+                    ),
+                    self.trace,
+                    **fields,
+                )
                 response = provider.generate(
                     job.snapshot,
                     lane,
                     job.token,
-                    lambda text: self.events.put(
-                        {"type": "progress", "request_id": job.request_id, "lane": lane, "message": redact(text)}
-                    ),
+                    progress,
                 )
                 job.token.check()
                 response.validate_sources(job.snapshot.observations, json.loads(job.snapshot.verified_files))
+                if self.trace:
+                    self.trace.record(
+                        "generation_finished",
+                        **fields,
+                        outcome="success",
+                        elapsed_ms=round((time.monotonic() - job.started) * 1000),
+                        artifacts=len(response.artifacts),
+                    )
                 self.events.put(
                     {"type": "result", "job": job, "response": response, "elapsed": time.monotonic() - job.started}
                 )
             except Cancelled:
+                if self.trace:
+                    self.trace.record(
+                        "generation_finished",
+                        request_id=job.request_id,
+                        session_id=job.snapshot.session_id,
+                        lane=lane,
+                        outcome="cancelled",
+                        elapsed_ms=round((time.monotonic() - job.started) * 1000),
+                    )
                 self.events.put({"type": "cancelled", "job": job})
             except Exception as error:
+                if self.trace:
+                    self.trace.record(
+                        "generation_finished",
+                        request_id=job.request_id,
+                        session_id=job.snapshot.session_id,
+                        lane=lane,
+                        outcome="cancelled" if job.token.event.is_set() else "error",
+                        error_type=type(error).__name__,
+                        elapsed_ms=round((time.monotonic() - job.started) * 1000),
+                    )
                 if not job.token.event.is_set():
                     self.events.put({"type": "error", "job": job, "message": redact(str(error))[:600]})
 
     def accept(self, event):
         job = event.get("job")
         if not job or job.request_id != self.request_id or job.snapshot.session_id != self.context.session_id:
+            if job and self.trace:
+                self.trace.record(
+                    "result_discarded", request_id=job.request_id, lane=job.lane, reason="superseded_request"
+                )
             return False
         if event["type"] in {"result", "error", "cancelled"}:
             self.active_lanes.discard(job.lane)
         if job.snapshot.revision != self.context.revision or job.token.event.is_set():
+            if self.trace:
+                self.trace.record("result_discarded", request_id=job.request_id, lane=job.lane, reason="stale_context")
             return False
         if event["type"] != "result":
             return True
         rank = {"quick": 0, "deep": 1}[job.lane]
         if rank < self.published_lane:
+            if self.trace:
+                self.trace.record(
+                    "result_discarded", request_id=job.request_id, lane=job.lane, reason="late_quick_response"
+                )
             return False
         self.published_lane = rank
         response = event["response"]
+        files = json.loads(job.snapshot.verified_files)
+        for artifact in response.artifacts:
+            if artifact.basis == "verified_file" and artifact.path in files:
+                self.artifact_bases[digest(artifact.model_dump())] = {
+                    "path": artifact.path,
+                    "base_hash": digest(files[artifact.path]),
+                }
+        if len(self.artifact_bases) > 256:
+            self.artifact_bases = dict(list(self.artifact_bases.items())[-256:])
         if self.current:
             self.history.append(self.current)
             self.history = self.history[-12:]
@@ -158,6 +233,24 @@ class Coordinator:
             self.pending_version = (job.request_id, job.snapshot.session_id, job.snapshot.revision)
         else:
             self.current = response
+        if self.trace:
+            self.trace.record(
+                "result_accepted",
+                request_id=job.request_id,
+                session_id=job.snapshot.session_id,
+                lane=job.lane,
+                revision=job.snapshot.revision,
+                outcome="held" if self.pinned else "displayed",
+                result_hash=digest(response.model_dump()),
+            )
+            for artifact in response.artifacts:
+                self.trace.record(
+                    "artifact_published",
+                    request_id=job.request_id,
+                    session_id=job.snapshot.session_id,
+                    lane=job.lane,
+                    artifact_hash=digest(artifact.model_dump()),
+                )
         return True
 
     def toggle_pin(self):

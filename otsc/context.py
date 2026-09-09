@@ -34,6 +34,10 @@ class Snapshot:
     verified_files: str = "{}"
     previous_artifacts: str = "[]"
     open_questions: tuple[str, ...] = ()
+    constraints: tuple[str, ...] = ()
+    decisions: tuple[str, ...] = ()
+    restored: bool = False
+    inspection_results: str = "[]"
 
     def prompt_context(self) -> dict:
         return {
@@ -45,6 +49,10 @@ class Snapshot:
             "previous_summary": self.previous_summary,
             "previous_artifacts": json.loads(self.previous_artifacts),
             "unresolved_questions": list(self.open_questions),
+            "user_constraints": list(self.constraints),
+            "user_decisions": list(self.decisions),
+            "restored_history_requires_fresh_evidence": self.restored,
+            "inspection_results": json.loads(self.inspection_results),
         }
 
 
@@ -61,6 +69,9 @@ class ContextStore:
     previous_summary: str = ""
     previous_artifacts: str = "[]"
     open_questions: tuple[str, ...] = ()
+    constraints: tuple[str, ...] = ()
+    decisions: tuple[str, ...] = ()
+    restored: bool = False
     _screen_fingerprint: str = ""
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
@@ -80,6 +91,26 @@ class ContextStore:
                 self.repo_root = root
                 self.verified_files = {}
                 self.revision += 1
+
+    def set_task_details(self, constraints, decisions):
+        constraints = tuple(redact(line.strip()) for line in constraints if line.strip())
+        decisions = tuple(redact(line.strip()) for line in decisions if line.strip())
+        if max(len(constraints), len(decisions)) > 20 or any(len(x) > 1000 for x in (*constraints, *decisions)):
+            raise ValueError("Use up to 20 entries per field, each under 1000 characters")
+        with self._lock:
+            if (constraints, decisions) == (self.constraints, self.decisions):
+                return False
+            self.constraints, self.decisions = constraints, decisions
+            self.add(
+                "note",
+                "User-maintained task details:\nConstraints:\n"
+                + "\n".join(constraints)
+                + "\nDecisions:\n"
+                + "\n".join(decisions),
+                "typed",
+                "primary_user",
+            )
+            return True
 
     def set_verified_files(self, root: str, files: dict[str, str]):
         with self._lock:
@@ -179,6 +210,9 @@ class ContextStore:
                 json.dumps(self.verified_files, ensure_ascii=False),
                 self.previous_artifacts,
                 self.open_questions,
+                self.constraints,
+                self.decisions,
+                self.restored,
             )
 
     def clear(self):
@@ -190,5 +224,7 @@ class ContextStore:
             self.previous_task = self.previous_summary = self._screen_fingerprint = ""
             self.previous_artifacts = "[]"
             self.open_questions = ()
+            self.constraints = self.decisions = ()
+            self.restored = False
             if self.goal:
                 self.add("task", self.goal, "typed", "primary_user")

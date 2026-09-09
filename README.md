@@ -73,19 +73,44 @@ Quick replies answer the pressing question without generating a second code prop
 
 The hourly assistance limit counts requests (each can use two models), not dollars or transcription calls. Provider quotas still apply. Failed requests show their error and retain existing work; the app does not silently retry or switch providers.
 
+## Keep and inspect a task
+
+The app menu adds **Task details…** for constraints and confirmed decisions, **Save task session**, and **Open task session…**. **Remember sessions locally** enables automatic checkpoints; it is off by default. Checkpoints preserve task text, proposals, and history without raw audio, images, credentials, or a running capture state. Restoring a task pauses capture and keeps saved proposals distinct from freshly verified source.
+
+**Inspect context before deep responses** is optional and off by default. A single model can choose a few read-only operations on the already supplied snapshot before producing the normal deep response. The app enforces three inspection steps and a 30-second inspection budget. See the [operating guide](docs/operating-guide.md) for controls, storage, recovery, and deletion.
+
+Local diagnostics record bounded operational metadata: versions, request timing, token usage when supplied, errors, stale responses, and explicit useful/needs-work feedback. Captured content and proposals are excluded from this diagnostic stream. It does not estimate dollar costs from missing pricing data.
+
+```sh
+python ots.py ops --output /tmp/otsc-operations.html
+python ots.py ops --recovery-exercise --output /tmp/otsc-recovery
+```
+
 ## Verification and implementation
 
 ```sh
 uv run --extra mac python -m unittest discover -s tests -v
-uvx ruff check otsc tests
+uvx ruff check ots.py otsc evals tests
 python ots.py --smoke-test /tmp/otsc-smoke
+python ots.py eval
 ```
 
 Core tests can run outside macOS with `uv sync --extra test`. The native smoke test exercises synthetic quick/deep responses, annotations, clean copy, collaborator replies, excerpt diffs, resizing, selection, click-through, audio queuing, diagrams, and settings construction. It renders only the app's own views under `/tmp`; it does not capture the desktop. Test reports distinguish these checks from live provider, permission, and acoustic testing.
 
+`python ots.py eval` validates the 28-case synthetic corpus without inference. Explicit live evaluations produce a local HTML report containing inputs, responses, checks, and case-specific critiques:
+
+```sh
+python ots.py eval --live --split development --output /tmp/otsc-development
+python ots.py eval --live --split holdout --output /tmp/otsc-holdout
+```
+
+The [evaluation protocol](evals/protocol.md) follows the task-specific error-analysis approach of Hamel Husain and Shreya Shankar. Reference examples and model judgments are assistant-authored and provisional; they are not human calibration or an estimate of field accuracy. The portable CI workflow runs offline checks only.
+
 An explicit live run is available with `.venv/bin/python tests/live_workflow.py`. It uses a staged code window, locally generated speech, the real local recognizer, and real Codex requests, then verifies the result in the AppKit window. It requires the local-ASR extra, cached speech weights, Codex sign-in, and screen-recording permission. It is not part of the ordinary offline test suite.
 
 - [Current implementation and verification boundaries](docs/implementation.md)
+- [Interactive walkthrough](docs/portfolio/index.html) and [technical case study](docs/portfolio/case-study.md)
+- [Information and action boundaries](docs/threat-model.md)
 - [Response contract](docs/assistance-contract.md)
 - [Development review and follow-up cases](docs/development-review.md)
 - [Product plan](docs/over-the-shoulder-coder-plan.md)
@@ -94,3 +119,5 @@ An explicit live run is available with `.venv/bin/python tests/live_workflow.py`
 Preferences and temporary redacted vision frames use `~/Library/Application Support/Over The Shoulder Coder`; credentials use Keychain. Raw screenshot and cloud-transcription audio files are not persisted. Local ASR and Codex use temporary directories removed after each operation. OCR redaction is a best-effort filter, not a guarantee that every secret in an image is recognizable. Enable vision only for screen content you intend to send to that provider.
 
 Legacy source was preserved in commit `c6f644a` before replacement. Local recordings and screenshots remain excluded from Git. Historical capture-bearing commits have not been rewritten or published as part of this work.
+
+`python ots.py export-source --output /tmp/otsc-source.zip` prepares a filtered source archive for review without Git history. It does not publish or package the application.

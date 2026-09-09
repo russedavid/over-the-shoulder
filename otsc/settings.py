@@ -41,6 +41,8 @@ class ModelChoice(BaseModel):
             parsed = urlsplit(self.base_url)
             if parsed.username or parsed.password:
                 raise ValueError("Keep credentials in Keychain, not in an endpoint URL")
+            if parsed.query or parsed.fragment:
+                raise ValueError("Use an API base URL without query parameters or a fragment")
             if parsed.scheme != "https" and not (
                 parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
             ):
@@ -82,6 +84,9 @@ class Settings(BaseModel):
     window_bounds: tuple[int, int, int, int] = (120, 100, 1050, 800)
     goal: str = ""
     project_folder: str = ""
+    local_session_memory: bool = False
+    operational_metadata: bool = True
+    inspection_enabled: bool = False
 
 
 def load_settings(directory: Path | None = None) -> Settings:

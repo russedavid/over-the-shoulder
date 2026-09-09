@@ -8,10 +8,11 @@ from urllib.parse import quote
 
 import httpx
 
-from otsc.models import parse_response, response_schema
-from otsc.privacy import redact
+from otsc.models import decode_json, normalize_optional_file_metadata, parse_response, response_schema
+from otsc.privacy import app_directory, redact
 from otsc.prompts import SYSTEM, build_prompt
 from otsc.settings import Credentials, ModelChoice
+from otsc.telemetry import digest, record_progress
 from otsc.workspace import derive_patches, verified_from_snapshot
 
 
@@ -21,13 +22,20 @@ def latest_image(snapshot, enabled):
     for item in reversed(snapshot.observations):
         if item.image_path:
             path = Path(item.image_path)
-            if path.exists() and path.stat().st_size < 8_000_000:
+            root = (app_directory() / "captures").resolve()
+            if (
+                not path.is_symlink()
+                and path.resolve().is_relative_to(root)
+                and path.exists()
+                and path.stat().st_size < 8_000_000
+            ):
                 return base64.b64encode(path.read_bytes()).decode()
             break
     return None
 
 
-def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
+def make_request(choice, prompt, key, image_data=None, *, lane="deep", schema=None, system=SYSTEM):
+    schema = response_schema(lane) if schema is None else schema
     provider, root = choice.provider, choice.endpoint()
     if not choice.model.strip():
         raise ValueError(f"Choose a model for {provider} in Settings")
@@ -41,14 +49,12 @@ def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
             content.append({"type": "input_image", "image_url": "data:image/png;base64," + image_data})
         body = {
             "model": choice.model,
-            "instructions": SYSTEM,
+            "instructions": system,
             "input": [{"role": "user", "content": content}],
             "stream": True,
             "store": False,
             "max_output_tokens": choice.max_tokens,
-            "text": {
-                "format": {"type": "json_schema", "name": "assistance", "strict": True, "schema": response_schema(lane)}
-            },
+            "text": {"format": {"type": "json_schema", "name": "assistance", "strict": True, "schema": schema}},
         }
         if choice.reasoning:
             body["reasoning"] = {"effort": choice.reasoning}
@@ -59,12 +65,12 @@ def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
         if image_data:
             parts.append({"inline_data": {"mime_type": "image/png", "data": image_data}})
         body = {
-            "systemInstruction": {"parts": [{"text": SYSTEM}]},
+            "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "maxOutputTokens": choice.max_tokens,
                 "responseMimeType": "application/json",
-                "responseJsonSchema": response_schema(lane),
+                "responseJsonSchema": schema,
             },
         }
         model = quote(choice.model.removeprefix("models/"), safe="")
@@ -78,7 +84,7 @@ def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
             )
         body = {
             "model": choice.model,
-            "system": SYSTEM,
+            "system": system,
             "messages": [{"role": "user", "content": content}],
             "max_tokens": choice.max_tokens,
             "stream": True,
@@ -86,7 +92,7 @@ def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
                 {
                     "name": "submit_assistance",
                     "description": "Return the task assistance to the desktop app.",
-                    "input_schema": response_schema(lane),
+                    "input_schema": schema,
                 }
             ],
             "tool_choice": {"type": "tool", "name": "submit_assistance"},
@@ -102,7 +108,7 @@ def make_request(choice, prompt, key, image_data=None, *, lane="deep"):
         ]
     body = {
         "model": choice.model,
-        "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": content}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": content}],
         "stream": True,
         "max_completion_tokens": choice.max_tokens,
         "response_format": {"type": "json_object"},
@@ -169,17 +175,50 @@ class HTTPProvider:
         self.choice = choice.model_copy(deep=True)
         self.credentials = credentials or Credentials()
         self.transport = transport
+        self.last_raw_response = None
+        self.last_raw_text = ""
 
     def generate(self, snapshot, lane, token, progress):
+        files = verified_from_snapshot(snapshot)
+        raw = self.generate_json(
+            snapshot,
+            lane,
+            token,
+            progress,
+            schema=response_schema(lane),
+            system=SYSTEM,
+            prompt=build_prompt(snapshot, lane, verified_files=files),
+        )
+        self.last_raw_response = raw
+        result = normalize_optional_file_metadata(
+            parse_response(json.dumps(raw), lane), snapshot.observations, files, progress
+        )
+        result.validate_sources(snapshot.observations, files)
+        return derive_patches(result, files)
+
+    def generate_json(self, snapshot, lane, token, progress, *, schema, system, prompt):
         key = self.credentials.get(self.choice, lane)
         if not key and self.choice.provider != "compatible":
             raise ValueError(f"Add the {lane} {self.choice.provider} API key in Settings")
-        files = verified_from_snapshot(snapshot)
-        prompt = build_prompt(snapshot, lane, verified_files=files)
         url, headers, body = make_request(
-            self.choice, prompt, key, latest_image(snapshot, self.choice.send_images), lane=lane
+            self.choice,
+            prompt,
+            key,
+            latest_image(snapshot, self.choice.send_images),
+            lane=lane,
+            schema=schema,
+            system=system,
         )
         text, preview = "", ""
+        usage = {}
+        record_progress(
+            progress,
+            "provider_request",
+            provider=self.choice.provider,
+            model=self.choice.model,
+            prompt_hash=digest(system + prompt),
+            schema_hash=digest(schema),
+        )
         with httpx.Client(
             timeout=httpx.Timeout(90, connect=15), transport=self.transport, follow_redirects=False
         ) as client:
@@ -194,7 +233,9 @@ class HTTPProvider:
                     token.check()
                     if raw == "[DONE]":
                         break
-                    text += event_text(self.choice.provider, json.loads(raw))
+                    event = json.loads(raw)
+                    usage.update(event_usage(self.choice.provider, event))
+                    text += event_text(self.choice.provider, event)
                     if len(text) > 200000:
                         raise RuntimeError("Response exceeded the app's size limit")
                     current = summary_preview(text)
@@ -202,8 +243,40 @@ class HTTPProvider:
                         preview = current
                         progress("Draft: " + preview)
         token.check()
-        result = parse_response(text, lane).validate_sources(snapshot.observations, files)
-        return derive_patches(result, files)
+        if usage:
+            record_progress(progress, "provider_usage", **usage)
+        self.last_raw_text = text
+        return decode_json(text)
+
+
+def event_usage(provider, event):
+    if provider == "gemini":
+        source = event.get("usageMetadata", {})
+        mapping = {
+            "promptTokenCount": "input_tokens",
+            "candidatesTokenCount": "output_tokens",
+            "cachedContentTokenCount": "cached_tokens",
+        }
+    else:
+        source = (
+            event.get("usage")
+            or event.get("response", {}).get("usage")
+            or event.get("message", {}).get("usage")
+            or event.get("x_groq", {}).get("usage")
+            or {}
+        )
+        mapping = {
+            "input_tokens": "input_tokens",
+            "prompt_tokens": "input_tokens",
+            "output_tokens": "output_tokens",
+            "completion_tokens": "output_tokens",
+            "cached_input_tokens": "cached_tokens",
+        }
+    return {
+        target: source[key]
+        for key, target in mapping.items()
+        if isinstance(source.get(key), int) and not isinstance(source[key], bool) and 0 <= source[key] <= 10**12
+    }
 
 
 class DisabledProvider:

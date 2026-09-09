@@ -22,7 +22,10 @@ from otsc.preferences import Preferences
 from otsc.privacy import private_directory, private_write, redact
 from otsc.providers import provider_for
 from otsc.scheduler import Coordinator
+from otsc.sessions import checkpoint, load_session, restore_context, save_session
 from otsc.settings import Credentials, Settings, load_settings, save_settings
+from otsc.task_details import TaskDetails
+from otsc.telemetry import TraceStore, digest
 from otsc.workspace import read_project
 
 
@@ -93,7 +96,18 @@ class Controller(NSObject):
         self.context.set_goal(self.settings.goal)
         self.context.set_repo(self.settings.project_folder)
         self.events = queue.Queue()
-        self.coordinator = Coordinator(self.context, self.get_provider, hourly_limit=self.settings.hourly_requests)
+        self.trace = TraceStore(
+            enabled=not self.demo and self.settings.operational_metadata,
+            source=getattr(options, "trace_source", "interactive"),
+        )
+        self.coordinator = Coordinator(
+            self.context, self.get_provider, hourly_limit=self.settings.hourly_requests, trace=self.trace
+        )
+        self.checkpoint_signature = None
+        self.checkpoint_at = 0
+        self.loaded_base_hashes = {}
+        self.restored_artifact_keys = set()
+        self.task_details_window = None
         self.screen = ScreenCapture()
         self.audio = None
         self.midi = None
@@ -141,7 +155,14 @@ class Controller(NSObject):
 
     @objc.python_method
     def get_provider(self, lane):
-        return DemoProvider() if self.demo else provider_for(getattr(self.settings, lane), self.credentials)
+        if self.demo:
+            return DemoProvider()
+        provider = provider_for(getattr(self.settings, lane), self.credentials)
+        if lane == "deep" and self.settings.inspection_enabled and hasattr(provider, "generate_json"):
+            from otsc.inspection import InspectionProvider
+
+            return InspectionProvider(provider)
+        return provider
 
     @objc.python_method
     def make_window(self):
@@ -231,12 +252,28 @@ class Controller(NSObject):
             ("Toggle click-through", "toggleClickThrough:", "i"),
             ("Hide / show window", "toggleVisibility:", ""),
             ("New task", "newTask:", "n"),
+            ("Task details…", "taskDetails:", ""),
+            ("Save task session", "saveSession:", "s"),
+            ("Open task session…", "openSession:", "o"),
+            ("Resume last saved task", "resumeLastSession:", ""),
+            ("Remember sessions locally", "toggleSessionMemory:", ""),
+            ("Delete saved task sessions…", "deleteSessions:", ""),
+            ("Inspect context before deep responses", "toggleInspection:", ""),
+            ("Mark suggestion useful", "markUseful:", ""),
+            ("Mark suggestion needs work", "markNeedsWork:", ""),
+            ("Show diagnostics", "showDiagnostics:", ""),
             ("Load synthetic code example", "demoCode:", ""),
             ("Load synthetic design example", "demoDesign:", ""),
             ("Quit Over The Shoulder Coder", "quit:", "q"),
         ]:
             item = A.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(title, action, key)
             item.setTarget_(self)
+            if action == "toggleSessionMemory:":
+                item.setState_(int(self.settings.local_session_memory))
+                self.memory_menu_item = item
+            if action == "toggleInspection:":
+                item.setState_(int(self.settings.inspection_enabled))
+                self.inspection_menu_item = item
             if action == "toggleClickThrough:":
                 item.setKeyEquivalentModifierMask_(A.NSEventModifierFlagCommand | A.NSEventModifierFlagShift)
             submenu.addItem_(item)
@@ -299,6 +336,7 @@ class Controller(NSObject):
     def apply_settings(self, settings):
         self.pause()
         self.settings = settings
+        self.trace.enabled = settings.operational_metadata and not self.demo
         self.coordinator.hourly_limit = settings.hourly_requests
         self.coordinator.cancel()
         self.status.setStringValue_("Settings saved. Press Start following or Help now when ready.")
@@ -516,6 +554,8 @@ class Controller(NSObject):
             self.coordinator.request()
         if self.options.smoke_test:
             self.smoke_tick()
+        elif not self.demo:
+            self.checkpoint_if_enabled()
 
     @objc.python_method
     def handle_event(self, event):
@@ -737,6 +777,14 @@ class Controller(NSObject):
                 "verified_file": "Compared with the selected project snapshot",
                 "discussion": "Based on discussion",
             }[artifact.basis]
+            if artifact.basis == "verified_file" and digest(artifact.model_dump()) in self.restored_artifact_keys:
+                current = self.context.verified_files.get(artifact.path)
+                original = self.coordinator.artifact_bases.get(digest(artifact.model_dump()), {}).get("base_hash")
+                basis = (
+                    "Saved proposal — base matches the selected snapshot"
+                    if current is not None and digest(current) == original
+                    else "Saved proposal — current file base has not been confirmed"
+                )
             if artifact.kind == "diagram":
                 self.graph.artifact = artifact
                 self.graph_scroll.setHidden_(False)
@@ -786,6 +834,201 @@ class Controller(NSObject):
         pasteboard.clearContents()
         pasteboard.setString_forType_(self.copy_text(explained=True), A.NSPasteboardTypeString)
         self.status.setStringValue_("Artifact and line explanations copied.")
+
+    def taskDetails_(self, sender):
+        self.pause()
+        self.task_details_window = TaskDetails.alloc().initWithController_(self)
+        self.task_details_window.window.makeKeyAndOrderFront_(None)
+
+    @objc.python_method
+    def make_checkpoint(self):
+        return checkpoint(
+            self.context,
+            self.coordinator,
+            displayed_artifacts=self.displayed_artifacts,
+            selected_id=self.selected_id,
+            selected_view=str(self.view.titleOfSelectedItem()),
+        )
+
+    def saveSession_(self, sender):
+        try:
+            path = save_session(self.make_checkpoint())
+            self.trace.record("session_saved", session_id=self.context.session_id, revision=self.context.revision)
+            self.status.setStringValue_("Task session saved locally: " + path.name)
+        except (ValueError, OSError):
+            self.status.setStringValue_(
+                "The task session could not be saved. Check available storage and the session size."
+            )
+
+    def openSession_(self, sender):
+        self.pause()
+        panel = A.NSOpenPanel.openPanel()
+        panel.setCanChooseFiles_(True)
+        panel.setCanChooseDirectories_(False)
+        panel.setAllowsMultipleSelection_(False)
+        from otsc.privacy import app_directory
+
+        directory = app_directory() / "sessions"
+        directory.mkdir(exist_ok=True)
+        panel.setDirectoryURL_(A.NSURL.fileURLWithPath_(str(directory)))
+        if panel.runModal() == A.NSModalResponseOK:
+            try:
+                self.restore_session(load_session(str(panel.URL().path())))
+            except (ValueError, OSError):
+                self.status.setStringValue_("This is not a supported task-session file. Existing work has been kept.")
+
+    def resumeLastSession_(self, sender):
+        from otsc.privacy import app_directory
+
+        paths = [p for p in (app_directory() / "sessions").glob("*.json") if not p.is_symlink()]
+        if not paths:
+            self.status.setStringValue_("No saved task session is available yet.")
+            return
+        try:
+            self.restore_session(load_session(max(paths, key=lambda p: p.stat().st_mtime)))
+        except (OSError, ValueError):
+            self.status.setStringValue_("The latest session could not be restored. Existing work has been kept.")
+
+    @objc.python_method
+    def restore_session(self, document):
+        authorized = self.context.repo_root
+        self.pause()
+        self.context = restore_context(document, authorized_project=authorized)
+        self.coordinator.context = self.context
+        self.coordinator.current = document.current
+        self.coordinator.history = list(document.history)
+        self.coordinator.pending = None
+        self.coordinator.pending_version = None
+        self.coordinator.request_id = ""
+        self.coordinator.last_requested_revision = -1
+        self.coordinator.pinned = document.pinned
+        self.coordinator.artifact_bases = dict(document.artifact_bases)
+        self.displayed_artifacts = list(document.displayed_artifacts)
+        self.artifact_context = (self.context.session_id, self.context.goal)
+        self.selected_id = document.selected_id
+        self.loaded_base_hashes = dict(document.base_hashes)
+        self.restored_artifact_keys = {digest(a.model_dump()) for a in document.displayed_artifacts}
+        self.goal.setStringValue_(self.context.goal)
+        if document.selected_view in {"Artifact", "Conversation", "Context", "Observed files", "History"}:
+            self.view.selectItemWithTitle_(document.selected_view)
+        self.pin.setTitle_("Unpin" if document.pinned else "Pin")
+        self.body.setSelectedRange_((0, 0))
+        self.summary.setSelectedRange_((0, 0))
+        self.render_response()
+        if document.current is None:
+            retain_text(self.summary, "Restored task\n\n" + (self.context.goal or "No goal has been set yet."))
+            self.artifacts.removeAllItems()
+            self.artifacts.addItemsWithTitles_([a.title for a in self.displayed_artifacts] or ["No artifact yet"])
+        self.refresh_body()
+        self.trace.record("session_restored", session_id=self.context.session_id, revision=self.context.revision)
+        self.status.setStringValue_(
+            "Task session restored. Capture is paused; saved proposals need fresh context before reuse."
+        )
+
+    def toggleSessionMemory_(self, sender):
+        self.settings.local_session_memory = not self.settings.local_session_memory
+        self.memory_menu_item.setState_(int(self.settings.local_session_memory))
+        if not self.demo:
+            save_settings(self.settings)
+        self.checkpoint_if_enabled(force=True)
+        self.status.setStringValue_(
+            "Task text and proposals will be saved locally. Raw audio and images are excluded."
+            if self.settings.local_session_memory
+            else "Automatic session saving is off."
+        )
+
+    def toggleInspection_(self, sender):
+        self.settings.inspection_enabled = not self.settings.inspection_enabled
+        self.inspection_menu_item.setState_(int(self.settings.inspection_enabled))
+        if not self.demo:
+            save_settings(self.settings)
+        self.status.setStringValue_(
+            "Bounded context inspection enabled for deep responses."
+            if self.settings.inspection_enabled
+            else "Standard deep response path selected."
+        )
+
+    def deleteSessions_(self, sender):
+        alert = A.NSAlert.alloc().init()
+        alert.setMessageText_("Delete saved task sessions?")
+        alert.setInformativeText_(
+            "This removes locally saved task text and proposals. The current open task stays in memory."
+        )
+        alert.addButtonWithTitle_("Cancel")
+        alert.addButtonWithTitle_("Delete saved sessions")
+        if alert.runModal() != A.NSAlertSecondButtonReturn:
+            return
+        from otsc.privacy import app_directory
+
+        directory = app_directory() / "sessions"
+        removed = 0
+        for pattern in ("task-*.json", "autosave-*.json", "autosave.json"):
+            for path in directory.glob(pattern):
+                path.unlink(missing_ok=True)
+                removed += 1
+        self.settings.local_session_memory = False
+        self.memory_menu_item.setState_(0)
+        if not self.demo:
+            save_settings(self.settings)
+        self.status.setStringValue_(f"Deleted {removed} saved sessions. Automatic session saving is off.")
+
+    @objc.python_method
+    def checkpoint_if_enabled(self, force=False):
+        if self.demo or not self.settings.local_session_memory:
+            return
+        if not force and time.monotonic() - self.checkpoint_at < 2:
+            return
+        current = self.coordinator.current
+        signature = (
+            self.context.session_id,
+            self.context.revision,
+            digest(current.model_dump()) if current else "",
+            self.coordinator.pinned,
+        )
+        if signature == self.checkpoint_signature:
+            return
+        from otsc.privacy import app_directory
+
+        try:
+            save_session(
+                self.make_checkpoint(), app_directory() / "sessions" / ("autosave-" + self.context.session_id + ".json")
+            )
+            self.checkpoint_signature = signature
+        except (ValueError, OSError):
+            self.trace.record("checkpoint_error", error_type="StorageError")
+        self.checkpoint_at = time.monotonic()
+
+    def markUseful_(self, sender):
+        self.record_feedback("useful")
+
+    def markNeedsWork_(self, sender):
+        self.record_feedback("needs_work")
+
+    @objc.python_method
+    def record_feedback(self, rating):
+        artifact = self.current_artifact()
+        current = self.coordinator.current
+        if not current:
+            return
+        self.trace.record(
+            "feedback",
+            session_id=self.context.session_id,
+            artifact_hash=digest(artifact.model_dump() if artifact else current.model_dump()),
+            rating=rating,
+        )
+        self.status.setStringValue_("Feedback saved locally: " + rating.replace("_", " ") + ".")
+
+    def showDiagnostics_(self, sender):
+        report = self.trace.summary()
+        alert = A.NSAlert.alloc().init()
+        alert.setMessageText_("Local operational diagnostics")
+        alert.setInformativeText_(
+            f"{report['generations']} generations · {report['failed']} failures\n"
+            f"P50: {report['p50_ms']} ms · P95: {report['p95_ms']} ms\n"
+            f"Reported tokens: {report['reported_input_tokens']} input / {report['reported_output_tokens']} output\n"
+            "Only operational metadata is logged. Captured content and credentials are excluded."
+        )
+        alert.runModal()
 
     def exportArtifact_(self, sender):
         artifact = self.current_artifact()
@@ -913,6 +1156,7 @@ class Controller(NSObject):
         return True
 
     def newTask_(self, sender):
+        self.checkpoint_if_enabled(force=True)
         self.pause()
         self.context.goal = ""
         self.context.clear()
@@ -924,6 +1168,8 @@ class Controller(NSObject):
         self.coordinator.last_requested_revision = -1
         self.coordinator.history.clear()
         self.displayed_artifacts = []
+        self.loaded_base_hashes = {}
+        self.restored_artifact_keys = set()
         self.artifact_context = None
         self.body.setSelectedRange_((0, 0))
         self.summary.setSelectedRange_((0, 0))
@@ -969,6 +1215,7 @@ class Controller(NSObject):
             return
         self.closed = True
         self.pause()
+        self.checkpoint_if_enabled(force=True)
         self.timer.invalidate()
         self.coordinator.close()
         if self.midi:
@@ -1057,6 +1304,18 @@ class Controller(NSObject):
                 self.flush_context()
                 assert self.context.observations[-1].at == 12345.0
                 self.audio = None
+                self.context.set_task_details(["Keep missing data distinct from zero"], ["Use None for empty input"])
+                saved_copy = self.copy_text()
+                saved = self.make_checkpoint()
+                session_path = save_session(saved, directory / "session.json")
+                old_session = self.context.session_id
+                self.newTask_(None)
+                self.restore_session(load_session(session_path))
+                assert self.context.session_id != old_session
+                assert self.copy_text() == saved_copy
+                assert self.context.constraints == ("Keep missing data distinct from zero",)
+                assert not self.running and self.audio is None
+                assert all(not o.image_path for o in self.context.observations)
                 self.smoke_step = 1
                 self.load_demo(True)
             elif self.smoke_step == 1 and response.artifacts[0].kind == "diagram":
@@ -1080,6 +1339,7 @@ class Controller(NSObject):
                                 "collaborator response and observed diff",
                                 "new audio queued without starving deep work",
                                 "MIDI window controls retain content and hidden state",
+                                "saved task restores exact artifacts and constraints with capture paused",
                             ],
                             "live_capture": False,
                             "live_api_calls": False,

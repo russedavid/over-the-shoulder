@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "over-the-shoulder-coder"
-version = "0.1.0"
+version = "0.2.0"
 description = "A task-centered desktop coding and design collaborator"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.12,<3", "httpx>=0.28,<1", "Pillow>=11,<13"]
@@ -28,7 +28,7 @@ local-asr = ["mlx-audio>=0.2; platform_system == 'Darwin' and platform_machine =
 otsc = "otsc.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["otsc"]
+packages = ["otsc", "evals"]
 
 [tool.ruff]
 line-length = 120

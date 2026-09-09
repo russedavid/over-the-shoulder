@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Over The Shoulder Coder</title>
+<style>
+:root{color-scheme:light;--paper:#f8f4ec;--ink:#30291f;--line:#cbbba8;--accent:#77583d}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.55 system-ui,sans-serif}
+main{max-width:1120px;margin:auto;padding:56px 28px}h1{font-size:clamp(34px,5vw,58px);line-height:1.08;max-width:900px;margin:12px 0 24px}
+h2{font-size:26px;margin-top:42px}p{max-width:850px}.eyebrow{letter-spacing:.1em;text-transform:uppercase;font-size:12px;color:var(--accent);font-weight:700}
+.lede{font-size:21px}.workspace{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin:26px 0}.panel{background:#fffdf9;border:1px solid var(--line);border-radius:10px;padding:22px;min-width:0}
+.panel h3{margin:0 0 14px;font-size:16px}.tag{font-size:12px;color:#745c42}.voice{padding:12px 14px;border-left:3px solid var(--line);background:#f5ede2;margin:14px 0}
+pre,code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:1.6}.annotation{font:13px/1.5 system-ui;color:#75614d;margin:0 0 12px 24px}
+button{background:#fffdf9;border:1px solid #ad957a;border-radius:6px;color:var(--ink);font:inherit;font-size:14px;padding:9px 15px;cursor:pointer}button[aria-pressed=true]{background:#77583d;color:white}
+.controls{display:flex;flex-wrap:wrap;gap:10px}.notice{font-size:13px;color:#75614d}.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.steps div{border-top:2px solid var(--line);padding-top:14px}a{color:#68492e}footer{margin-top:48px;border-top:1px solid var(--line);padding-top:18px;font-size:13px}
+@media(max-width:750px){.workspace,.steps{grid-template-columns:1fr}main{padding:32px 18px}}
+</style>
+<main>
+<div class="eyebrow">Over The Shoulder Coder</div>
+<h1>Keep the task, conversation, and code in view.</h1>
+<p class="lede">A desktop assistant that follows screen and speech, remembers the task's constraints, and produces code or design proposals tied to the evidence it actually received.</p>
+<p>Short help arrives first. Deeper work follows. The person doing the work stays in control of what to use, change, or reject.</p>
+<h2>One small example</h2>
+<p class="notice">Interactive illustration using a self-authored fixture. These steps do not record your screen, use your microphone, or call a model.</p>
+<div class="controls" role="group" aria-label="Replay steps">
+<button data-step="0" aria-pressed="true">1. Observe</button><button data-step="1" aria-pressed="false">2. Hear the question</button><button data-step="2" aria-pressed="false">3. Review the proposal</button>
+</div>
+<div class="workspace">
+<section class="panel"><h3>What the assistant knows</h3><div class="tag">stats.py · observed excerpt, not a complete file</div><pre>def mean(values):
+    return sum(values) / len(values)</pre><div id="voices" hidden><div class="voice"><strong>Other participant</strong><br>“Could we just return zero when the input is empty?”</div><div class="voice"><strong>Primary user</strong><br>“Zero is a real measurement here. Missing data needs a different result.”</div></div><details><summary>Evidence boundary</summary><p>Only the displayed lines and stated requirements are known. The surrounding module has not been observed. A proposal cannot turn that gap into a verified full-file change.</p></details></section>
+<section class="panel" aria-live="polite"><h3 id="reply-title">Follow the work</h3><p id="reply">The task is to make the helper handle empty input while preserving meaningful numeric results.</p><div id="proposal" hidden><div class="controls"><button id="notes" aria-pressed="true">Line explanations on</button></div><div id="code"></div><p class="tag">Proposed excerpt · clean code and teaching notes are separate</p></div></section>
+</div>
+<h2>What the engineering has to get right</h2>
+<div class="steps"><div><strong>Context that remains accountable</strong><p>Observed fragments, complete selected files, spoken claims, and proposals retain distinct meanings and sources.</p></div><div><strong>Updates that respect ongoing work</strong><p>Requests use stable snapshots. Late answers, pinning, task changes, and manual capture are handled explicitly.</p></div><div><strong>Authority outside the model</strong><p>Optional inspection uses a bounded read-only tool set. Mentioning a file or suggesting an action does not grant permission.</p></div></div>
+<h2>Inspect the work</h2>
+<p>The repository contains the native application, source-only setup, behavior checks, session recovery, operational metadata, and task-specific evaluations. The evaluation reports retain inputs, outputs, concrete critiques, and uncertainty.</p>
+<p><a href="case-study.md">Technical case study</a> · <a href="../operating-guide.md">Operating guide</a> · <a href="../threat-model.md">Boundaries and limitations</a> · <a href="../../evals/protocol.md">Evaluation protocol</a></p>
+<pre>python ots.py</pre>
+<footer>The desktop application sends selected context to the configured model provider. Local speech recognition and optional local task memory are available. This illustration is not evidence of field adoption, a production accuracy rate, or research novelty.</footer>
+</main>
+<script>
+const lines=[['def mean(values):','Define the helper over the supplied measurements.'],['    if not values:','Detect empty input before dividing by its length.'],['        return None','Represent missing data without inventing a numeric measurement.'],['    return sum(values) / len(values)','Compute the mean for a nonempty collection, including a real mean of zero.']];
+let explained=true;
+function draw(){const root=document.getElementById('code');root.replaceChildren();for(const [line,note] of lines){const code=document.createElement('pre');code.textContent=line;root.append(code);if(explained){const text=document.createElement('div');text.className='annotation';text.textContent=note;root.append(text)}}}
+document.querySelectorAll('[data-step]').forEach(button=>button.addEventListener('click',()=>{const step=Number(button.dataset.step);document.querySelectorAll('[data-step]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));document.getElementById('voices').hidden=step===0;document.getElementById('proposal').hidden=step!==2;document.getElementById('reply-title').textContent=step===0?'Follow the work':step===1?'Answer the suggestion':'Offer a reviewable change';document.getElementById('reply').textContent=step===0?'The task is to make the helper handle empty input while preserving meaningful numeric results.':'Returning zero would conflate missing data with a valid measurement. Use an explicit missing value, and let the caller handle that case.';draw()}));
+document.getElementById('notes').addEventListener('click',event=>{explained=!explained;event.target.setAttribute('aria-pressed',String(explained));event.target.textContent='Line explanations '+(explained?'on':'off');draw()});draw();
+</script>
+</html>
