@@ -53,20 +53,11 @@ Quick and deep work begin from the same snapshot. A newer request supersedes old
 
 The hourly assistance limit counts requests (each can use two models), not dollars or transcription calls. Provider quotas still apply. Failed requests show their error and retain existing work; the app does not silently retry or switch providers.
 
-## Local app bundle
-
-```sh
-uv run --extra mac python scripts/build_macos_app.py
-open 'dist/Over The Shoulder Coder.app'
-```
-
-This is a **development bundle tied to this checkout and its `.venv`**. It is not a signed, notarized, portable distribution. Rebuild after moving the checkout or changing the Codex installation path.
-
 ## Verification and implementation
 
 ```sh
 uv run --extra mac python -m unittest discover -s tests -v
-uvx ruff check otsc tests scripts
+uvx ruff check otsc tests
 uv run --extra mac otsc --smoke-test /tmp/otsc-smoke
 ```
 

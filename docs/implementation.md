@@ -42,7 +42,8 @@ The native smoke test creates an AppKit window using synthetic responses, resize
 - Live API/Codex account authentication, model-specific structured-output support, latency, quotas, and quality. Adapters have mocked transport coverage; this is not a live provider certification.
 - Optional local ASR model download and transcription on actual audio. Its large optional dependencies were not installed as part of the default setup.
 - More realistic screen/OCR inputs, dense code views, screenshots containing diagrams without much text, and long collaborative tasks. The current frame gate is a conservative heuristic, not a learned task-change detector.
-- Signed/notarized standalone packaging. The generated `.app` currently points at this checkout's `.venv`.
+
+The owner has deferred `.app` packaging. The Python entry point and `.command` launchers are the current run paths; distribution work is outside the active scope.
 
 No public portfolio release or push was performed. Clean publication of the old capture-bearing history remains a separate release task.
 
