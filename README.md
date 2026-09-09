@@ -108,7 +108,10 @@ The [evaluation protocol](evals/protocol.md) follows the task-specific error-ana
 
 An explicit live run is available with `.venv/bin/python tests/live_workflow.py`. It uses a staged code window, locally generated speech, the real local recognizer, and real Codex requests, then verifies the result in the AppKit window. It requires the local-ASR extra, cached speech weights, Codex sign-in, and screen-recording permission. It is not part of the ordinary offline test suite.
 
+If macOS has no active display, use `.venv/bin/python tests/live_workflow.py --rendered-screen`. This explicitly renders the owned code fixture into an image before running the real OCR, vision, speech-recognition, and model paths. Its report marks desktop capture as untested; it is not an acoustic hardware test.
+
 - [Current implementation and verification boundaries](docs/implementation.md)
+- [Evaluation findings, including disputed judgments](docs/evaluation-results.md)
 - [Interactive walkthrough](docs/portfolio/index.html) and [technical case study](docs/portfolio/case-study.md)
 - [Information and action boundaries](docs/threat-model.md)
 - [Response contract](docs/assistance-contract.md)

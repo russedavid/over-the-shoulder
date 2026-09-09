@@ -33,5 +33,7 @@ Real development exposed missed annotations in quick output, stale-context risk,
 
 The project includes portable behavior/security tests, a native UI preservation check, a staged live workflow, an optional inspection runtime, local operational records, and a case-specific evaluation corpus. Real examples exercise code, source-grounding, participant responses, and design output. Runtime reports and raw captures remain local; aggregate findings belong in a reviewed results note with the exact run manifest.
 
+The [current findings](../evaluation-results.md) include 52 passing behavior checks, 20/20 development passes, and a frozen held-out result of 7/8 with one disputed evaluator failure. A four-case inspection comparison produced the same task outcomes while increasing median generation time from 14.32 to 21.59 seconds. That evidence supports keeping the standard workflow as the default. The small sample and provisional labels are explicit parts of the result.
+
 The interactive illustration is a self-authored example, not a live inference endpoint or a claim of customer adoption. The software was developed with Codex assistance; product constraints and reviews came from the owner. Evaluation references and model-assisted critiques are labeled accordingly. The project does not establish enterprise operating scale, universal security, or research novelty.
 

@@ -43,6 +43,8 @@ The native smoke test creates an AppKit window using synthetic responses, resize
 
 Version 0.2 adds explicit task constraints/decisions, saved task sessions, metadata-only diagnostics, an optional bounded inspection loop, and a task-specific evaluation harness. Automatic session memory and inspection are off by default. Proposals retain the base hashes from their generation snapshot; loading a session cannot grant access to a new local project. A controlled recovery exercise verifies that provider failure preserves existing work and stale responses cannot replace it.
 
+The expanded behavior suite has 52 passing tests. The native preservation check passes. The [evaluation findings](evaluation-results.md) report the completed development, held-out, and inspection assessments, including evaluator mistakes and the boundaries of their evidence. The CI workflow is configured for portable offline checks; it has not been run remotely.
+
 ## Live behavior verified
 
 The Terminal launch has screen-capture and microphone permission. The actual `AudioCapture` class started microphone and system audio together and received frames from both. Ambient audio from that check was neither saved nor transmitted. Separately, a generated question played through system audio was captured by ScreenCaptureKit and correctly recognized by the local Parakeet model.
@@ -58,6 +60,8 @@ When malformed status values were explicitly included in that fixture's requirem
 The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. After MIDI restoration, the automated suite has 33 passing tests; the native smoke check also passes.
 
 The current local preferences use Codex Spark / GPT-5.5, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed.
+
+After the 0.2 additions, the explicitly rendered-fixture live test passed with quick/deep output at 5.7/15.3 seconds. It used real OCR, local ASR, vision and Codex calls, and native rendering; desktop capture was marked false because macOS reported no active display. The earlier hardware and active-display checks above remain distinct evidence.
 
 MIDI support has been restored from the baseline mappings. CoreMIDI delivery was verified with a virtual destination; no physical controller was connected during that check. Tests cover note filtering, debounce, disconnect/reconnect, and shutdown. Native window checks cover MIDI movement, resize, and hide/show without discarding content. Standalone voice completion stops hardware capture before waiting for transcription.
 

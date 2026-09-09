@@ -6,6 +6,8 @@ files through the normal audio queues. Native hardware routing is checked separa
 All captures, responses, and reports stay in a temporary directory.
 """
 
+import argparse
+import io
 import json
 import os
 import re
@@ -25,6 +27,7 @@ import numpy as np
 import objc
 import Quartz
 from Foundation import NSMakeRect, NSObject, NSTimer
+from PIL import Image
 from PyObjCTools import AppHelper
 
 from otsc.app import Controller
@@ -38,9 +41,11 @@ GOAL = "Make the mean helper handle empty input without confusing missing data w
 
 
 class LiveRun(NSObject):
-    def initWithDirectory_(self, directory):
+    def initWithDirectory_renderedScreen_(self, directory, rendered_screen):
         self = objc.super(LiveRun, self).init()
         self.directory = Path(directory)
+        self.rendered_screen = bool(rendered_screen)
+        self.frame_patch = None
         self.started = time.monotonic()
         self.requested = None
         self.quick_seen = False
@@ -110,6 +115,18 @@ class LiveRun(NSObject):
                 self.fixture.orderFrontRegardless()
                 self.fixture.display()
                 A.NSApp.activateIgnoringOtherApps_(True)
+                if self.rendered_screen:
+                    # Explicit fixture mode: still run real OCR, vision, ASR, and
+                    # inference, but never claim this is a desktop capture.
+                    root = self.fixture.contentView()
+                    bitmap = root.bitmapImageRepForCachingDisplayInRect_(root.bounds())
+                    root.cacheDisplayInRect_toBitmapImageRep_(root.bounds(), bitmap)
+                    data = bitmap.representationUsingType_properties_(A.NSBitmapImageFileTypePNG, {})
+                    self.fixture_image = Image.open(io.BytesIO(bytes(data))).convert("RGB")
+                    self.frame_patch = patch(
+                        "pyautogui.screenshot", side_effect=lambda **kwargs: self.fixture_image.copy()
+                    )
+                    self.frame_patch.start()
                 info = Quartz.CGWindowListCopyWindowInfo(
                     Quartz.kCGWindowListOptionIncludingWindow, self.fixture.windowNumber()
                 )[0]
@@ -180,7 +197,8 @@ class LiveRun(NSObject):
                         "real_model": True,
                         "real_local_asr": True,
                         "real_screen_ocr": True,
-                        "screen_scope": "staged code window only",
+                        "real_screen_capture": not self.rendered_screen,
+                        "screen_scope": "rendered owned fixture" if self.rendered_screen else "staged code window only",
                         "speech": "generated acceptance sentences",
                     }
                 )
@@ -199,6 +217,8 @@ class LiveRun(NSObject):
         print(json.dumps({"directory": str(self.directory), **result}), flush=True)
         self.timer.invalidate()
         self.controller.shutdown()
+        if self.frame_patch:
+            self.frame_patch.stop()
         self.fixture.orderOut_(None)
         if not result["passed"]:
             os._exit(1)
@@ -206,12 +226,23 @@ class LiveRun(NSObject):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--rendered-screen",
+        action="store_true",
+        help="Use an app-rendered fixture instead of desktop capture; real OCR, ASR, and models still run",
+    )
+    args = parser.parse_args()
+    if not args.rendered_screen and Quartz.CGGetActiveDisplayList(16, None, None)[2] == 0:
+        parser.error(
+            "macOS reports no active display. Use --rendered-screen for an explicitly rendered-fixture run, or rerun desktop capture with an active display."
+        )
     directory = Path(tempfile.mkdtemp(prefix="otsc-live-workflow-"))
     os.environ["OTSC_DATA_DIR"] = str(directory / "preferences")
     os.environ["HF_HUB_OFFLINE"] = "1"
     app = A.NSApplication.sharedApplication()
     app.setActivationPolicy_(A.NSApplicationActivationPolicyRegular)
-    run = LiveRun.alloc().initWithDirectory_(str(directory))
+    run = LiveRun.alloc().initWithDirectory_renderedScreen_(str(directory), args.rendered_screen)
     app.setDelegate_(run.controller)
     print("Live workflow started: " + str(directory), flush=True)
     AppHelper.runEventLoop()
