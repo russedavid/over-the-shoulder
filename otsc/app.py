@@ -771,7 +771,7 @@ class Controller(NSObject):
     def toggleClickThrough_(self, sender):
         ignore = not self.window.ignoresMouseEvents()
         self.window.setIgnoresMouseEvents_(ignore)
-        self.window.setAlphaValue_(0.88 if ignore else 1.0)
+        self.window.setAlphaValue_(0.05 if ignore else 1.0)
         self.status.setStringValue_(
             "Click-through on. Activate this app and press Cmd-Shift-I to restore interaction."
             if ignore

@@ -31,7 +31,7 @@ Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Goog
 1. Describe the task, or let the captured work establish it. You can add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt.
 2. **Capture now** reads the screen. **Help now** (Cmd-Return) refreshes the screen and finishes the current speech chunk before asking for assistance. **Start following** captures and checks for changes every 30 seconds by default.
 3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Diagrams export as SVG and code changes as diffs.
-4. **Pin** protects work you are reading. Selecting output text also holds incoming replacements. Cmd-Shift-I toggles click-through; clicking the app's Dock icon restores interaction.
+4. **Pin** protects work you are reading. Selecting output text also holds incoming replacements. Cmd-Shift-I toggles click-through at 5% opacity; clicking the app's Dock icon restores interaction and full opacity.
 
 Capture starts only from an explicit control. Screen, microphone, and system audio can be enabled separately. macOS may request Screen & System Audio Recording and Microphone permissions for the launcher/Python application. After changing permissions, relaunch if capture still fails.
 
