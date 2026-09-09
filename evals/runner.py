@@ -156,7 +156,7 @@ def calibrate(choice, directory):
 
 
 def validate_reference(choice, reference_check):
-    if reference_check.get("model") != choice.model_dump() or reference_check.get("rubric_hash") != digest(
+    if ModelChoice.model_validate(reference_check.get("model", {})) != choice or reference_check.get("rubric_hash") != digest(
         JUDGE_SYSTEM
     ):
         raise ValueError("The reference check does not match this judge configuration")
@@ -181,7 +181,9 @@ def run_live(
     limit=None,
     inspection=False,
     judge=True,
-    model="gpt-5.5",
+    model="gpt-6-astra",
+    reasoning="medium",
+    fast_mode=True,
     judge_model="gpt-6-astra",
     output=None,
     reference_check=None,
@@ -197,7 +199,7 @@ def run_live(
         selected = selected[:limit]
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
     directory = Path(output) if output else app_directory() / "evaluations" / run_id
-    choice = ModelChoice(provider="codex", model=model, reasoning="low")
+    choice = ModelChoice(provider="codex", model=model, reasoning=reasoning, fast_mode=fast_mode)
     judge_choice = ModelChoice(provider="codex", model=judge_model, reasoning="low") if judge else None
     manifest = {
         "release": release_manifest(),

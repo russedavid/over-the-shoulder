@@ -8,12 +8,12 @@ from urllib.parse import quote
 
 import httpx
 
-from otsc.models import decode_json, normalize_optional_file_metadata, parse_response, response_schema
+from otsc.models import decode_json, response_schema
 from otsc.privacy import app_directory, redact
 from otsc.prompts import SYSTEM, build_prompt
 from otsc.settings import Credentials, ModelChoice
 from otsc.telemetry import digest, record_progress
-from otsc.workspace import derive_patches, verified_from_snapshot
+from otsc.workspace import verified_from_snapshot
 
 
 def latest_image(snapshot, enabled):
@@ -190,11 +190,9 @@ class HTTPProvider:
             prompt=build_prompt(snapshot, lane, verified_files=files),
         )
         self.last_raw_response = raw
-        result = normalize_optional_file_metadata(
-            parse_response(json.dumps(raw), lane), snapshot.observations, files, progress
-        )
-        result.validate_sources(snapshot.observations, files)
-        return derive_patches(result, files)
+        from otsc.delivery import prepare_response
+
+        return prepare_response(raw, snapshot, lane, token, progress, provider=self)
 
     def generate_json(self, snapshot, lane, token, progress, *, schema, system, prompt):
         key = self.credentials.get(self.choice, lane)

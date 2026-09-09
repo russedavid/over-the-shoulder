@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>OTSC · Recorded session review</title>
+    <link rel="stylesheet" href="/review.css" />
+    <script src="/review.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <strong>Over The Shoulder Coder</strong
+        ><span>Recorded session review</span>
+      </div>
+      <button id="refresh">Refresh results</button>
+    </header>
+    <div class="shell">
+      <aside>
+        <p class="eyebrow">Eight recorded sessions</p>
+        <nav id="sessions" aria-label="Sessions"></nav>
+        <button id="loose">Other screenshots</button>
+        <p class="small">
+          Original files remain unchanged. Reference drafts and machine judgments
+          remain provisional until you review them.
+        </p>
+      </aside>
+      <main>
+        <div id="heading"><h1>Loading recordings…</h1></div>
+        <nav id="tabs" class="tabs" aria-label="Review stages"></nav>
+        <section id="content" aria-live="polite"></section>
+        <section id="review" hidden class="review card">
+          <h2>Your review</h2>
+          <p id="review-label"></p>
+          <div class="columns">
+            <label
+              >New system output<select id="verdict">
+                <option value="unreviewed">Not reviewed</option>
+                <option value="pass">Pass</option>
+                <option value="fail">Fail</option>
+                <option value="uncertain">Uncertain</option>
+              </select></label
+            >
+            <label
+              >Reference draft<select id="reference-status">
+                <option value="unreviewed">Not reviewed</option>
+                <option value="approved">Approve reference</option>
+                <option value="needs_work">Needs changes</option>
+                <option value="uncertain">Evidence is unclear</option>
+              </select></label
+            >
+          </div>
+          <label
+            >Correct or replace the reference<textarea
+              id="correction"
+              rows="8"
+              spellcheck="false"
+            ></textarea>
+          </label>
+          <label
+            >Notes, important errors, or changes to the acceptance
+            criteria<textarea id="notes" rows="3"></textarea>
+          </label>
+          <div class="actions">
+            <button id="save-review" class="primary">Save review</button
+            ><span id="save-status" role="status"></span>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="toast" role="status"></div>
+  </body>
+</html>

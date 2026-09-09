@@ -20,16 +20,18 @@ class ScreenCapture:
     def __init__(self):
         self.signature = ""
         self.paths = deque()
+        self.lock = threading.Lock()
+        self.closed = False
 
-    def capture(self, region=None, *, keep_image=False, on_captured=None):
+    def capture(self, region=None, *, keep_image=False, on_captured=None, full_resolution=False):
         import pyautogui
 
         image = pyautogui.screenshot(region=region)
         if on_captured:
             on_captured()
-        return self.interpret(image, keep_image=keep_image)
+        return self.interpret(image, keep_image=keep_image, full_resolution=full_resolution)
 
-    def interpret(self, image, *, keep_image=False):
+    def interpret(self, image, *, keep_image=False, full_resolution=False):
         import pytesseract
         from PIL import ImageDraw
 
@@ -97,21 +99,27 @@ class ScreenCapture:
         if keep_image:
             directory = private_directory(app_directory() / "captures")
             target = directory / (uuid4().hex + ".png")
-            image.thumbnail((1920, 1440))
+            if not full_resolution:
+                image.thumbnail((1920, 1440))
             output = io.BytesIO()
             image.save(output, format="PNG")
-            private_write(target, output.getvalue())
-            self.paths.append(target)
-            # Only this process's recent redacted frames; raw screenshots are never persisted.
-            while len(self.paths) > 12:
-                self.paths.popleft().unlink(missing_ok=True)
+            with self.lock:
+                if self.closed:
+                    raise RuntimeError("Screen capture was closed")
+                private_write(target, output.getvalue())
+                self.paths.append(target)
+                # Only this process's recent redacted frames; raw screenshots are never persisted.
+                while len(self.paths) > 12:
+                    self.paths.popleft().unlink(missing_ok=True)
             path = str(target)
         return text, path
 
     def close(self):
-        for path in self.paths:
-            path.unlink(missing_ok=True)
-        self.paths.clear()
+        with self.lock:
+            self.closed = True
+            for path in self.paths:
+                path.unlink(missing_ok=True)
+            self.paths.clear()
 
 
 def make_system_audio():

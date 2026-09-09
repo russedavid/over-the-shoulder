@@ -1,4 +1,4 @@
-# Implementation status — September 8, 2026
+# Implementation status — September 9, 2026
 
 The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-overhaul source remains in Git history. The old mode-specific entry points, prompts, static personal/interview material, and fixed-column renderers were retired; `test.py` and `lib/main.py` are import-safe compatibility launchers.
 
@@ -9,7 +9,10 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Window, task controls, retained output, automatic cadence | `otsc/app.py`, `otsc/native.py` |
 | Startup configuration and Keychain credentials | `otsc/preferences.py`, `otsc/settings.py` |
 | One response schema and task instructions | `otsc/models.py`, `otsc/prompts.py` |
-| Observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
+| Independent component validation and bounded annotation repair | `otsc/delivery.py` |
+| Five-minute observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
+| Full-resolution Astra low/Fast screen reading | `otsc/perception.py` |
+| Background source-linked memory and observed workspace updates | `otsc/context_builder.py` |
 | Two bounded response workers and revision checks | `otsc/scheduler.py` |
 | Streaming HTTP providers | `otsc/providers.py` |
 | Existing Codex CLI integration | `otsc/codex.py` |
@@ -29,11 +32,13 @@ The Codex adapter disables model-visible shell/executor, browser, image-read, ap
 
 ## Capture and bounded work
 
-Screen capture reuses PyAutoGUI and Tesseract. The window hides briefly for capture and returns while OCR runs off the main thread. Text and a coarse image fingerprint gate repeated requests. Recognized credential rows are redacted in OCR and optional vision frames. The most recent 12 frames are retained during the session and removed on normal exit; abrupt process termination may leave temporary files.
+Screen capture uses PyAutoGUI, a local Tesseract redaction pass, and full-resolution Astra low/Fast visual reading. Tesseract text is not used as task OCR. Window sharing starts off (`NSWindowSharingNone`), with no capture hide/show or artificial wait. The Sharing button can enable sharing; only then does a visible window hide with a 10 ms preparation delay. The screenshot-completion callback dispatches restoration directly to AppKit before OCR, without waiting for the 100 ms event poll. Failure and cancellation also restore the window, while explicit user hiding is respected. A completed reading schedules the next fresh screenshot immediately during following. The most recent 12 redacted frames are retained during the session and removed on normal exit; abrupt termination may leave temporary files. Errors back off and Pause cancels in-flight work.
 
 Microphone capture uses sounddevice; system audio uses ScreenCaptureKit and excludes the current process's audio. Channels are transcribed separately in bounded worker queues. Transcription can use a local MLX recognizer or configured Groq/OpenAI ASR. Temporary audio is removed after local transcription; cloud ASR uses an in-memory WAV. The system does not claim biometric identification, individual diarization of every remote participant, or echo cancellation.
 
-Context retains up to 100 observations, a bounded set of observed fragments, prior artifacts, unresolved questions, and at most 30 filtered source files / 180 KB in the selected project snapshot. Snapshot limits are visible as an omitted-file count. Two fixed daemon workers replace unbounded inference threads. New incoming context queues during a response; Help now supersedes it explicitly. Long-running Codex work has a 240-second deadline.
+Context retains five minutes of screen/audio observations (up to 1,000 entries), typed context, source evidence for accumulated memory, observed fragments, prior answers/artifacts, unresolved questions, and at most 30 filtered source files / 180 KB in the selected project snapshot. The source-text snapshot budget is 800 KB with explicit omitted IDs; the former 24 KB budget is gone. A separate bounded context worker maintains up to 80 source-linked notes while two fixed answer workers consume immutable snapshots. New passive evidence enters immediately without invalidating an in-flight answer. Explicit task/project edits and newer requests still supersede old work. Long-running Codex work has a 240-second deadline.
+
+The [continuous workflow report](continuous-context.md) records the 92-test suite, native preservation check, and finite live design/revision run using real OCR, ASR, context updates and Astra answers. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
 
 ## What has been verified
 
@@ -44,6 +49,8 @@ The native smoke test creates an AppKit window using synthetic responses, resize
 Version 0.2 adds explicit task constraints/decisions, saved task sessions, metadata-only diagnostics, an optional bounded inspection loop, and a task-specific evaluation harness. Automatic session memory and inspection are off by default. Proposals retain the base hashes from their generation snapshot; loading a session cannot grant access to a new local project. A controlled recovery exercise verifies that provider failure preserves existing work and stale responses cannot replace it.
 
 The expanded behavior suite has 52 passing tests. The native preservation check passes. The [evaluation findings](evaluation-results.md) report the completed development, held-out, and inspection assessments, including evaluator mistakes and the boundaries of their evidence. The CI workflow is configured for portable offline checks; it has not been run remotely.
+
+The later [validation fix](validation-fix.md) recovered all 18 saved deep drafts without changing their code or dropping their artifacts, then delivered all 18 deep responses in a fresh recorded-input replay. Optional file-cache entries are isolated from answer delivery, and code explanations can receive one bounded metadata-only repair. A subsequent boundary audit added malformed-entry isolation and mutation coverage; the expanded suite now has 72 passing tests. The recorded replays use the same source sessions and do not establish performance on unseen tasks. [OCR/VLM tradeoffs](ocr-vlm-tradeoffs.md) remain a separate perception decision.
 
 ## Live behavior verified
 
@@ -59,7 +66,7 @@ When malformed status values were explicitly included in that fixture's requirem
 
 The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. After MIDI restoration, the automated suite has 33 passing tests; the native smoke check also passes.
 
-The current local preferences use Codex Spark / GPT-5.5, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed.
+The current local preferences use Codex Spark at low reasoning and GPT-6 Astra at medium reasoning with Fast processing, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed. The earlier GPT-5.5 results above retain their original model identity; the [Astra comparisons](astra-processing-comparison.md) record the later model update and controlled comparisons of processing and reasoning settings on one recorded case. The expanded suite has 76 passing tests; native checks cover saving the Fast preference and clearing it when switching away from Codex.
 
 After the 0.2 additions, the explicitly rendered-fixture live test passed with quick/deep output at 5.7/15.3 seconds. It used real OCR, local ASR, vision and Codex calls, and native rendering; desktop capture was marked false because macOS reported no active display. The earlier hardware and active-display checks above remain distinct evidence.
 

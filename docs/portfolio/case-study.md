@@ -35,5 +35,9 @@ The project includes portable behavior/security tests, a native UI preservation 
 
 The [current findings](../evaluation-results.md) include 52 passing behavior checks, 20/20 development passes, and a frozen held-out result of 7/8 with one disputed evaluator failure. A four-case inspection comparison produced the same task outcomes while increasing median generation time from 14.32 to 21.59 seconds. That evidence supports keeping the standard workflow as the default. The small sample and provisional labels are explicit parts of the result.
 
+The later [recorded-input evaluation](../recorded-evaluation-findings.md) exposed larger gaps: all 18 checkpoints delivered quick help, while nine deep drafts were blocked by validation. The review now connects original audio and images to new perception outputs, accepted responses, rejected drafts, and independently prepared references. These findings make source reconciliation, retained provenance, and task continuity concrete quality work. The owner can revise the references and judgments before they become regression targets.
+
+That investigation led to a [targeted delivery fix](../validation-fix.md): optional cache metadata no longer blocks the answer, and annotation repair cannot rewrite code. The same 18 stored drafts all became deliverable with their original artifacts and code retained. A fresh run also delivered all 18 deep answers. This is evidence of repaired delivery behavior; perception and semantic judgments still need separate scrutiny.
+
 The interactive illustration is a self-authored example, not a live inference endpoint or a claim of customer adoption. The software was developed with Codex assistance; product constraints and reviews came from the owner. Evaluation references and model-assisted critiques are labeled accordingly. The project does not establish enterprise operating scale, universal security, or research novelty.
 

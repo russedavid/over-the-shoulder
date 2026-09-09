@@ -34,9 +34,12 @@ class ModelChoice(BaseModel):
     send_images: bool = False
     max_tokens: int = Field(default=2000, ge=256, le=16000)
     reasoning: str = ""
+    fast_mode: bool = False
 
     @model_validator(mode="after")
     def validate_endpoint(self):
+        if self.fast_mode and self.provider != "codex":
+            raise ValueError("This Fast setting is supported by the Codex provider")
         if self.base_url:
             parsed = urlsplit(self.base_url)
             if parsed.username or parsed.password:
@@ -57,6 +60,7 @@ class ModelChoice(BaseModel):
 
 
 class Settings(BaseModel):
+    model_defaults_version: int = Field(default=2, ge=1)
     configured: bool = False
     quick: ModelChoice = Field(
         default_factory=lambda: ModelChoice(
@@ -65,7 +69,18 @@ class Settings(BaseModel):
     )
     deep: ModelChoice = Field(
         default_factory=lambda: ModelChoice(
-            provider="codex", model="gpt-5.5", reasoning="low", send_images=True, max_tokens=10000
+            provider="codex", model="gpt-6-astra", reasoning="medium", fast_mode=True, send_images=True, max_tokens=10000
+        )
+    )
+    ocr: ModelChoice = Field(
+        default_factory=lambda: ModelChoice(
+            provider="codex", model="gpt-6-astra", reasoning="low", fast_mode=True,
+            send_images=True, max_tokens=16000,
+        )
+    )
+    context_builder: ModelChoice = Field(
+        default_factory=lambda: ModelChoice(
+            provider="codex", model="gpt-6-astra", reasoning="low", fast_mode=True, max_tokens=10000,
         )
     )
     transcription: Literal["disabled", "local", "groq", "openai"] = "disabled"
@@ -93,7 +108,22 @@ def load_settings(directory: Path | None = None) -> Settings:
     path = (directory or app_directory()) / "settings.json"
     if not path.exists():
         return Settings()
-    return Settings.model_validate_json(path.read_text())
+    data = json.loads(path.read_text())
+    if isinstance(data, dict) and "model_defaults_version" not in data:
+        deep = data.get("deep", {})
+        previous_default = {"provider": "codex", "model": "gpt-5.5", "reasoning": "low"}
+        if isinstance(deep, dict) and all(deep.get(k) == v for k, v in previous_default.items()):
+            # An older running app may save its old defaults again when it exits.
+            # Upgrade that known profile on next launch; preserve custom choices.
+            data["deep"] = {**deep, "model": "gpt-6-astra", "reasoning": "medium"}
+        data["model_defaults_version"] = 1
+    if isinstance(data, dict) and data.get("model_defaults_version") == 1:
+        deep = data.get("deep", {})
+        prior = {"provider": "codex", "model": "gpt-6-astra", "reasoning": "medium"}
+        if isinstance(deep, dict) and all(deep.get(k) == v for k, v in prior.items()) and "fast_mode" not in deep:
+            data["deep"] = {**deep, "fast_mode": True}
+        data["model_defaults_version"] = 2
+    return Settings.model_validate(data)
 
 
 def save_settings(settings: Settings, directory: Path | None = None):

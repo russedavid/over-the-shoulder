@@ -6,7 +6,7 @@ The working application uses **Python, PyObjC, and AppKit**. It has one task wor
 
 ## Run it
 
-macOS 13 or later, Python 3.13, and [uv](https://docs.astral.sh/uv/). Screen OCR also requires Tesseract (`brew install tesseract`).
+macOS 13 or later, Python 3.13, and [uv](https://docs.astral.sh/uv/). Install Tesseract (`brew install tesseract`) for the local credential-redaction pass. The screen text used for assistance is read by Astra, not that local pass.
 
 ```sh
 uv sync --python 3.13 --extra mac
@@ -26,12 +26,15 @@ These are explicitly synthetic examples. The app menu can load either example; t
 
 ## Configure once, then work
 
-Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Google Gemini, Anthropic, Groq, or an OpenAI-compatible endpoint. The defaults use Codex Spark for quick replies and GPT-5.5 for deeper work through the existing Codex sign-in. Model names remain editable. API keys are saved in macOS Keychain; a blank key field preserves an existing key. Standard provider environment variables are also supported.
+Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Google Gemini, Anthropic, Groq, or an OpenAI-compatible endpoint. The defaults use GPT-5.3 Codex Spark at low reasoning for quick replies and GPT-6 Astra at medium reasoning with Fast processing for deeper work, through the existing Codex sign-in. The **Codex Fast** checkbox saves processing speed separately from reasoning effort. Model names remain editable. API keys are saved in macOS Keychain; a blank key field preserves an existing key. Standard provider environment variables are also supported.
+
+Continuous screen reading uses **GPT-6 Astra, low reasoning, Fast processing**, at full screenshot resolution. A separate Astra low/Fast worker maintains accumulated context and the observed workspace. These workers use the existing Codex sign-in; the `ocr` and `context_builder` preferences are saved separately from the answer models.
 
 1. Describe the task, or let the captured work establish it. You can add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt.
-2. **Capture now** reads the screen. **Help now** (Cmd-Return) refreshes the screen and finishes the current speech chunk before asking for assistance. **Start following** captures and checks for changes every 30 seconds by default.
+2. **Capture now** reads one screen with Astra. **Help now** (Cmd-Return) finishes the current speech chunk and asks from the latest available context while a fresh screen reading runs. If there is no context yet, it waits for that first reading. **Start following** continuously takes a fresh screenshot as soon as the previous OCR call finishes, alongside audio capture and transcription.
 3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Diagrams export as SVG and code changes as diffs.
 4. **Pin** protects work you are reading. Selecting output text also holds incoming replacements. Cmd-Shift-I toggles click-through at 5% opacity; clicking the app's Dock icon restores interaction and full opacity.
+5. **Sharing: Off** is the default on every launch. The window stays visible while screenshots are taken. **Sharing: On** allows window sharing; for the app's own screenshots it hides the window, waits 10 ms, captures, and restores it before OCR. The 10 ms is the preparation delay, in addition to the screenshot's actual duration.
 
 Capture starts only from an explicit control. Screen, microphone, and system audio can be enabled separately. macOS may request Screen & System Audio Recording and Microphone permissions for the launcher/Python application. After changing permissions, relaunch if capture still fails.
 
@@ -67,11 +70,17 @@ Observed files are bounded, versioned **fragments**, with source observations an
 
 **Project…** explicitly connects a folder. The app reads a bounded selection of text source files, respects Git ignore rules, skips symlinks, binary files, common credential files, and detected secrets. The selected snapshot may be sent to the configured model. Verified diffs are calculated by the app against the exact file contents in that snapshot. The app does not apply edits to your actual project.
 
-Quick and deep work begin from the same snapshot. A newer request supersedes older work; a late quick response cannot overwrite deep output. New capture/audio arriving during an active response is queued for the next snapshot, avoiding endless cancellation during conversation. Help now promotes the latest queued context immediately. Repeated screen text and minor visual changes do not automatically regenerate the answer. Resizing and copying never invoke a model.
+Quick and deep work begin from the same immutable snapshot: the last five minutes of screen readings and separately attributed transcripts, accumulated context, the observed/selected workspace, and the previous substantive answer. The background context builder adds, revises, or retires source-linked working notes and observed fragments. It cannot edit your project or change user-confirmed constraints and decisions.
+
+Capture, context building, and answers progress independently. Incoming evidence is available immediately for the next snapshot and does not cancel a useful answer already in progress. A newer request or explicit task/project change still supersedes old work; a late quick response cannot replace deep output. Exact repeated readings refresh the timeline without requesting an identical answer. Help now uses available context without waiting behind an OCR or context-building call. Resizing and copying never invoke a model.
+
+Diagrams remain first-class artifacts. A system-design request produces nodes and connections that the app draws and exports as SVG; follow-ups can revise the existing diagram using its stable identity. Code retains line-by-line teaching notes and clean copy. The five-minute stream and accumulated memory supply evidence for any of these outputs.
 
 Quick replies answer the pressing question without generating a second code proposal. Existing artifacts stay visible during those replies; deeper work supplies the annotated code, diff, or drawing. Editor line numbers are separated from source code during OCR, and indentation changes count as meaningful changes.
 
-The hourly assistance limit counts requests (each can use two models), not dollars or transcription calls. Provider quotas still apply. Failed requests show their error and retain existing work; the app does not silently retry or switch providers.
+Optional file-cache updates are validated separately from the answer. Unconfirmed entries are excluded without discarding useful assistance or creating a misleading diff. Code with missing or misaligned explanations receives at most one bounded annotation-only repair; the code itself is preserved. See the [validation fix and replay results](docs/validation-fix.md).
+
+The hourly assistance limit counts answer requests, not OCR, context-building, transcription calls, or dollars. Continuous following makes ongoing OCR and context calls as well as answers. One successful OCR call starts the next immediately; failed OCR/context calls back off, and Pause cancels in-flight work. A request normally uses quick/deep models and can add one annotation-repair call when needed. Provider quotas still apply. Failed requests retain existing work; the app does not silently switch providers.
 
 ## Keep and inspect a task
 
@@ -106,12 +115,18 @@ python ots.py eval --live --split holdout --output /tmp/otsc-holdout
 
 The [evaluation protocol](evals/protocol.md) follows the task-specific error-analysis approach of Hamel Husain and Shreya Shankar. Reference examples and model judgments are assistant-authored and provisional; they are not human calibration or an estimate of field accuracy. The portable CI workflow runs offline checks only.
 
+The [recorded-input evaluation](evals/recordings-protocol.md) covers the archived audio and screenshots with new ASR, OCR, visual interpretation, and current-system quick/deep replays. Its local review UI links each output to its source media and keeps manual verdicts, reference approvals, and corrections separate. Launch it with `.venv/bin/python -m evals.recording_review --port 8767` after preparing the private dataset. Raw recordings and generated evaluation data remain excluded from Git.
+
 An explicit live run is available with `.venv/bin/python tests/live_workflow.py`. It uses a staged code window, locally generated speech, the real local recognizer, and real Codex requests, then verifies the result in the AppKit window. It requires the local-ASR extra, cached speech weights, Codex sign-in, and screen-recording permission. It is not part of the ordinary offline test suite.
+
+`.venv/bin/python tests/live_continuous.py` runs a finite design-and-revision example through full-resolution Astra OCR, actual local speech transcription, the background context builder, and quick/deep answers. Its screen and speech are generated fixtures; it does not open capture hardware. The private report includes both diagrams, exact generation inputs/outputs, memory deltas, audio, and timings. See [continuous context and visual reading](docs/continuous-context.md).
 
 If macOS has no active display, use `.venv/bin/python tests/live_workflow.py --rendered-screen`. This explicitly renders the owned code fixture into an image before running the real OCR, vision, speech-recognition, and model paths. Its report marks desktop capture as untested; it is not an acoustic hardware test.
 
 - [Current implementation and verification boundaries](docs/implementation.md)
 - [Evaluation findings, including disputed judgments](docs/evaluation-results.md)
+- [Recorded-input findings and review limits](docs/recorded-evaluation-findings.md)
+- [Astra medium: Standard/Fast comparison and current models](docs/astra-processing-comparison.md)
 - [Interactive walkthrough](docs/portfolio/index.html) and [technical case study](docs/portfolio/case-study.md)
 - [Information and action boundaries](docs/threat-model.md)
 - [Response contract](docs/assistance-contract.md)

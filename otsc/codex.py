@@ -9,15 +9,16 @@ import tempfile
 import threading
 from pathlib import Path
 
-from otsc.models import decode_json, normalize_optional_file_metadata, parse_response, response_schema
+from otsc.models import decode_json, response_schema
 from otsc.privacy import private_write, redact
 from otsc.prompts import SYSTEM, build_prompt
 from otsc.providers import latest_image
 from otsc.telemetry import digest, record_progress
-from otsc.workspace import derive_patches, materialize_snapshot, verified_from_snapshot
+from otsc.workspace import materialize_snapshot, verified_from_snapshot
 
 
-def codex_command(executable, directory, schema, output, choice):
+def codex_command(executable, directory, schema, output, choice, *, fast_mode=None):
+    fast_mode = choice.fast_mode if fast_mode is None else fast_mode
     command = [
         executable,
         "-a",
@@ -67,12 +68,16 @@ def codex_command(executable, directory, schema, output, choice):
         command += ["--model", choice.model]
     if choice.reasoning:
         command += ["-c", "model_reasoning_effort=" + json.dumps(choice.reasoning)]
+    command += ["--enable" if fast_mode else "--disable", "fast_mode"]
+    if fast_mode:
+        command += ["-c", 'service_tier="fast"']
     return command
 
 
 class CodexProvider:
-    def __init__(self, choice):
+    def __init__(self, choice, *, fast_mode=None):
         self.choice = choice.model_copy(deep=True)
+        self.fast_mode = choice.fast_mode if fast_mode is None else fast_mode
         self.last_raw_response = None
         self.last_raw_text = ""
 
@@ -88,11 +93,9 @@ class CodexProvider:
             prompt=build_prompt(snapshot, lane, verified_files=files),
         )
         self.last_raw_response = raw
-        result = normalize_optional_file_metadata(
-            parse_response(json.dumps(raw), lane), snapshot.observations, files, progress
-        )
-        result.validate_sources(snapshot.observations, files)
-        return derive_patches(result, files)
+        from otsc.delivery import prepare_response
+
+        return prepare_response(raw, snapshot, lane, token, progress, provider=self)
 
     def generate_json(self, snapshot, lane, token, progress, *, schema, system, prompt):
         executable = shutil.which("codex")
@@ -106,7 +109,7 @@ class CodexProvider:
             materialize_snapshot(work, files)
             schema_path, output = directory / "schema.json", directory / "response.json"
             private_write(schema_path, json.dumps(schema))
-            command = codex_command(executable, work, schema_path, output, self.choice)
+            command = codex_command(executable, work, schema_path, output, self.choice, fast_mode=self.fast_mode)
             picture = latest_image(snapshot, self.choice.send_images)
             if picture:
                 import base64
@@ -131,6 +134,8 @@ class CodexProvider:
                 "provider_request",
                 provider="codex",
                 model=self.choice.model,
+                reasoning=self.choice.reasoning,
+                requested_service_tier="fast" if self.fast_mode else "standard",
                 prompt_hash=digest(full_prompt),
                 schema_hash=digest(schema),
             )

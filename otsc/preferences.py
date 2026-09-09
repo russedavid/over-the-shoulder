@@ -34,7 +34,7 @@ class Preferences(NSObject):
         frame(
             label(
                 root,
-                "Quick and deep requests run independently. Keys are stored in macOS Keychain. Blank key fields keep an existing key.",
+                "Quick and deep answers run independently. Screen OCR and context building use Astra low / Fast through Codex. API keys stay in Keychain.",
             ),
             24,
             52,
@@ -58,10 +58,17 @@ class Preferences(NSObject):
                 fields[key] = field(root, value, "Provider default" if key == "base_url" else "", secure=key == "key")
                 frame(fields[key], x + 88, y, 332, 28)
             fields["images"] = button(
-                root, "Send screenshot to this model (vision support required)", self, "noop:", checkbox=True
+                root, "Send screenshot (vision required)", self, "noop:", checkbox=True
             )
             fields["images"].setState_(int(choice.send_images))
-            frame(fields["images"], x, 348, 430, 28)
+            frame(fields["images"], x, 348, 290, 28)
+            fields["fast"] = button(root, "Codex Fast", self, "noop:", checkbox=True)
+            fields["fast"].setState_(int(choice.fast_mode))
+            fields["fast"].setEnabled_(choice.provider == "codex")
+            fields["fast"].setToolTip_("Faster processing for compatible Codex models, using the higher Fast credit rate.")
+            frame(fields["fast"], x + 296, 348, 124, 28)
+            fields["provider"].setTarget_(self)
+            fields["provider"].setAction_("providerChanged:")
             self.fields[lane] = fields
         frame(label(root, "Capture and conversation", size=16, bold=True), 24, 394, 860, 26)
         s = controller.settings
@@ -90,7 +97,7 @@ class Preferences(NSObject):
         self.fields["transcription_key"] = field(root, "", "Transcription API key", secure=True)
         frame(self.fields["transcription_key"], 594, 496, 300, 28)
         for key, title, value, x, width in [
-            ("interval_seconds", "Cadence (s)", str(s.interval_seconds), 24, 210),
+            ("interval_seconds", "Project poll (s)", str(s.interval_seconds), 24, 210),
             ("hourly_requests", "Requests / hour", str(s.hourly_requests), 270, 255),
             ("audio_chunk_seconds", "Audio chunk (s)", str(s.audio_chunk_seconds), 570, 325),
         ]:
@@ -107,7 +114,7 @@ class Preferences(NSObject):
         frame(
             label(
                 root,
-                "Local ASR may download its model on first use. Audio roles are channel hints; headphones help prevent microphone/system echo.",
+                "Screen OCR repeats immediately after each result; project polling applies when screen capture is off. Local ASR may download weights. Audio roles are channel hints.",
             ),
             24,
             613,
@@ -123,6 +130,14 @@ class Preferences(NSObject):
 
     def noop_(self, sender):
         pass
+
+    def providerChanged_(self, sender):
+        for lane in ("quick", "deep"):
+            fields = self.fields[lane]
+            enabled = str(fields["provider"].titleOfSelectedItem()) == "codex"
+            fields["fast"].setEnabled_(enabled)
+            if not enabled:
+                fields["fast"].setState_(0)
 
     def cancel_(self, sender):
         self.window.orderOut_(None)
@@ -140,6 +155,7 @@ class Preferences(NSObject):
                     max_tokens=int(fields["max_tokens"].stringValue()),
                     reasoning=str(fields["reasoning"].stringValue()).strip(),
                     send_images=bool(fields["images"].state()),
+                    fast_mode=bool(fields["fast"].state()),
                 )
                 if choice.provider not in {"disabled", "codex"} and not choice.model:
                     raise ValueError(f"Enter the {lane} model name")

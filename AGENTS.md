@@ -26,6 +26,8 @@ Evaluation work follows Hamel Husain and Shreya Shankar: inspect traces, retain 
 
 Read `evals/protocol.md` before changing evaluations. Preserve original run results when correcting an evaluator. Do not tune to held-out results. Keep runtime reports, traces, and generated responses outside Git; reviewed aggregate findings may be written into documentation with their run identity and limits.
 
+The owner explicitly authorized historical recordings for evaluation. Read `evals/recordings-protocol.md` for that workflow. Run recorded inputs through the current components; saved historical responses are neither ground truth nor generator input. Keep private recordings and derived outputs out of Git. Unit and browser-write tests use isolated synthetic fixtures so they cannot create false human labels in the real review dataset. Reference drafts stay provisional until actual manual review; preserve earlier attempts and rejected drafts when investigating failures.
+
 Task memory and model-directed inspection are additive, opt-in features. Restoring a checkpoint cannot authorize capture or a new project folder. Inspection tools use only immutable supplied evidence. Keep original proposal bases, user-confirmed decisions, and inferred suggestions distinct. Operational logging failures must not interrupt task assistance.
 
 Commit at real work/verification checkpoints using actual timestamps, in the user's allowed America/Chicago windows: 07:00–09:00 or 17:00–02:00. Preserve local artifacts when removing them from tracking. Do not rewrite or publish historical capture-bearing commits as part of routine implementation.

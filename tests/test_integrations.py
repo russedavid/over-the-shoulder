@@ -13,7 +13,7 @@ from otsc.capture import Transcriber, wav_bytes
 from otsc.codex import codex_command
 from otsc.context import ContextStore
 from otsc.models import Artifact, Assistance, LineAnnotation, ObservedFile
-from otsc.providers import HTTPProvider, make_request
+from otsc.providers import HTTPProvider, make_request, provider_for
 from otsc.scheduler import Cancellation
 from otsc.settings import ModelChoice, Settings, load_settings, save_settings
 from otsc.workspace import derive_patches, materialize_snapshot, read_project
@@ -163,6 +163,21 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("--ephemeral", command)
         self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", command)
 
+    def test_codex_fast_processing_preserves_reasoning_and_permissions(self):
+        choice = ModelChoice(provider="codex", model="gpt-6-astra", reasoning="medium")
+        args = ("codex", Path("/tmp/project"), Path("/tmp/schema"), Path("/tmp/result"), choice)
+        standard = codex_command(*args)
+        fast = codex_command(*args, fast_mode=True)
+        for command in (standard, fast):
+            self.assertIn('model_reasoning_effort="medium"', command)
+            self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
+            self.assertIn("--ignore-user-config", command)
+            self.assertIn("--output-schema", command)
+        self.assertEqual(standard[standard.index("fast_mode") - 1], "--disable")
+        self.assertEqual(fast[fast.index("fast_mode") - 1], "--enable")
+        self.assertNotIn('service_tier="fast"', standard)
+        self.assertIn('service_tier="fast"', fast)
+
 
 class WorkspaceTests(unittest.TestCase):
     def test_observed_excerpt_diff_keeps_its_partial_basis_and_line_positions(self):
@@ -294,6 +309,48 @@ class WorkspaceTests(unittest.TestCase):
 
 
 class SettingsAudioTests(unittest.TestCase):
+    def test_saved_fast_preference_reaches_codex_and_migrates_only_the_old_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            old = Settings(configured=True).model_dump()
+            old["model_defaults_version"] = 1
+            del old["deep"]["fast_mode"]
+            for update, expected in (({}, True), ({"fast_mode": False}, False), ({"model": "custom-model"}, False)):
+                with self.subTest(update=update):
+                    data = {**old, "deep": {**old["deep"], **update}}
+                    (root / "settings.json").write_text(json.dumps(data))
+                    loaded = load_settings(root)
+                    self.assertEqual(loaded.deep.fast_mode, expected)
+                    self.assertFalse(loaded.quick.fast_mode)
+                    save_settings(loaded, root)
+                    restored = load_settings(root)
+                    self.assertEqual(restored, loaded)
+                    self.assertEqual(provider_for(restored.deep, FakeCredentials()).fast_mode, expected)
+
+    def test_model_default_upgrade_survives_legacy_saves_and_preserves_custom_models(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            old = Settings(configured=True).model_dump()
+            del old["model_defaults_version"]
+            old["deep"].update(model="gpt-5.5", reasoning="low")
+            path = root / "settings.json"
+            for _ in range(2):
+                # An old application can write its in-memory settings on exit.
+                path.write_text(json.dumps(old))
+                upgraded = load_settings(root)
+                self.assertEqual((upgraded.deep.model, upgraded.deep.reasoning), ("gpt-6-astra", "medium"))
+                self.assertEqual(upgraded.quick.model_dump(), old["quick"])
+                self.assertEqual(upgraded.deep.send_images, old["deep"]["send_images"])
+                save_settings(upgraded, root)
+                self.assertEqual(load_settings(root), upgraded)
+            custom = {**old, "deep": {**old["deep"], "model": "custom-choice"}}
+            path.write_text(json.dumps(custom))
+            self.assertEqual(load_settings(root).deep.model, "custom-choice")
+            # An explicit choice made after migration is also preserved.
+            custom = {**old, "model_defaults_version": 1}
+            path.write_text(json.dumps(custom))
+            self.assertEqual(load_settings(root).deep.model, "gpt-5.5")
+
     def test_settings_are_private_and_contain_no_api_key_field(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

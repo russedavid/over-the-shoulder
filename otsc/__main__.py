@@ -21,7 +21,9 @@ def main():
     evaluate.add_argument("--cases", help="Comma-separated case IDs within the selected split")
     evaluate.add_argument("--inspection", action="store_true")
     evaluate.add_argument("--no-judge", action="store_true")
-    evaluate.add_argument("--model", default="gpt-5.5")
+    evaluate.add_argument("--model", default="gpt-6-astra")
+    evaluate.add_argument("--reasoning", default="medium", help="Generator reasoning effort; judge settings are separate")
+    evaluate.add_argument("--fast", action=argparse.BooleanOptionalAction, default=True, help="Use Codex Fast for generation")
     evaluate.add_argument("--judge-model", default="gpt-6-astra")
     evaluate.add_argument("--output")
     evaluate.add_argument("--reference-check", help="Reuse a compatible saved judge reference check")
@@ -55,6 +57,8 @@ def main():
                 inspection=args.inspection,
                 judge=not args.no_judge,
                 model=args.model,
+                reasoning=args.reasoning,
+                fast_mode=args.fast,
                 judge_model=args.judge_model,
                 output=args.output,
                 reference_check=reference,

@@ -183,7 +183,9 @@ def derive_patches(response: Assistance, files: dict[str, str]) -> Assistance:
                         basis="observed_fragment",
                         source_ids=artifact.source_ids,
                         annotations=[
-                            LineAnnotation(line=i, explanation=notes[i]) for i in sorted(patch_added_lines(excerpt))
+                            LineAnnotation(line=i, explanation=notes[i])
+                            for i in sorted(patch_added_lines(excerpt))
+                            if i in notes
                         ],
                         nodes=[],
                         edges=[],
@@ -210,7 +212,9 @@ def derive_patches(response: Assistance, files: dict[str, str]) -> Assistance:
             kind="patch",
             content=patch,
             annotations=[
-                LineAnnotation(line=i, explanation=notes[i]).model_dump() for i in sorted(patch_added_lines(patch))
+                LineAnnotation(line=i, explanation=notes[i]).model_dump()
+                for i in sorted(patch_added_lines(patch))
+                if i in notes
             ],
         )
         from otsc.models import Artifact

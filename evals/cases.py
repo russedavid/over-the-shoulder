@@ -449,6 +449,7 @@ def make_snapshot(item):
         observation.id = f"{item['id']}-obs-{index}"
         observation.at = 1788900000.0 + index
     context.session_id = "evaluation-" + item["id"]
+    context.clock = lambda: 1788900000.0 + len(context.observations)
     return context.snapshot()
 
 

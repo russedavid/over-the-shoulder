@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import AppKit as A
 import objc
@@ -14,18 +15,20 @@ from PyObjCTools import AppHelper
 
 from otsc.capture import AudioCapture, ScreenCapture
 from otsc.context import ContextStore
+from otsc.context_builder import ContextBuilder
 from otsc.demo import DemoProvider, seed_demo
 from otsc.diagram import diagram_layout, diagram_svg, edge_geometry
 from otsc.midi import MidiInput
 from otsc.native import FlippedView, button, color, field, frame, label, popup, retain_text, scroll_text
+from otsc.perception import read_screen
 from otsc.preferences import Preferences
 from otsc.privacy import private_directory, private_write, redact
 from otsc.providers import provider_for
-from otsc.scheduler import Coordinator
+from otsc.scheduler import Cancellation, Cancelled, Coordinator
 from otsc.sessions import checkpoint, load_session, restore_context, save_session
 from otsc.settings import Credentials, Settings, load_settings, save_settings
 from otsc.task_details import TaskDetails
-from otsc.telemetry import TraceStore, digest
+from otsc.telemetry import Progress, TraceStore, digest
 from otsc.workspace import read_project
 
 
@@ -103,6 +106,10 @@ class Controller(NSObject):
         self.coordinator = Coordinator(
             self.context, self.get_provider, hourly_limit=self.settings.hourly_requests, trace=self.trace
         )
+        self.context_builder = ContextBuilder(self.context, lambda: self.get_provider("context_builder"), trace=self.trace)
+        self.context_build_pending = False
+        self.auto_help_pending = False
+        self.next_answer_attempt = 0
         self.checkpoint_signature = None
         self.checkpoint_at = 0
         self.loaded_base_hashes = {}
@@ -112,12 +119,18 @@ class Controller(NSObject):
         self.audio = None
         self.midi = None
         self.overlay_hidden = False
+        self.window_sharing = False
+        self.capture_hidden_for = ""
+        self.capture_frame_pending = False
         self.voice_recording = False
         self.voice_started_audio = False
         self.stop_voice_after_help = False
         self.running = False
         self.capture_busy = False
         self.capture_generation = 0
+        self.capture_id = ""
+        self.capture_token = None
+        self.capture_failures = 0
         self.capture_request_after = False
         self.pending_manual = False
         self.manual_help_pending = False
@@ -177,6 +190,8 @@ class Controller(NSObject):
             NSMakeRect(x, y, w, h), style, A.NSBackingStoreBuffered, False
         )
         self.window.setTitle_("Over The Shoulder Coder" + (" · Synthetic demo" if self.demo else ""))
+        # Start with the prototype's exclusion from PyAutoGUI/Pillow capture.
+        self.window.setSharingType_(A.NSWindowSharingNone)
         self.window.setReleasedWhenClosed_(False)
         self.window.setMinSize_((820, 650))
         self.window.setDelegate_(self)
@@ -196,8 +211,12 @@ class Controller(NSObject):
             ("settings", "Settings", "settings:"),
             ("project", "Project…", "selectProject:"),
             ("new", "New task", "newTask:"),
+            ("sharing", "Sharing: Off", "toggleSharing:"),
         ]:
             self.controls[name] = button(self.root, title, self, action)
+        self.controls["sharing"].setToolTip_(
+            "Starts Off each launch. On allows window sharing and briefly hides the window for this app's screenshots."
+        )
         self.goal = field(
             self.root,
             self.context.goal,
@@ -308,6 +327,7 @@ class Controller(NSObject):
             ("project", 105),
             ("settings", 94),
             ("new", 94),
+            ("sharing", 112),
         ]:
             frame(self.controls[name], x, 77, width, 32)
             x += width + 5
@@ -367,10 +387,14 @@ class Controller(NSObject):
         if self.audio and not self.audio.stop_event.is_set() and self.settings.transcription != "disabled":
             self.awaiting_audio_flush = self.audio.flush_for_help(stop_capture=self.stop_voice_after_help)
         self.capture_context(request_after=False)
+        self.context_build_pending = True
+        self.capture_request_after = True
+        self.send_manual_help_if_ready()
 
     @objc.python_method
     def send_manual_help_if_ready(self):
-        if self.manual_help_pending and not self.capture_busy and self.awaiting_audio_flush is None:
+        if (self.manual_help_pending and self.awaiting_audio_flush is None
+                and (self.context.snapshot().observations or not self.capture_busy)):
             self.manual_help_pending = False
             self.pending_manual = False
             self.flush_context()
@@ -397,9 +421,9 @@ class Controller(NSObject):
             "Uncertain speaker": ("typed", "uncertain", "note"),
             "Screen / code": ("screen", "not_applicable", "screen"),
         }[choice]
-        self.context.add(kind, text, channel, speaker)
+        self.context.add(kind, text, channel, speaker, interrupting=True)
         self.input.setString_("")
-        self.status.setStringValue_("Context added. Press Help now, or let the next cadence pick it up.")
+        self.status.setStringValue_("Context added. Press Help now, or let following pick it up.")
         self.refresh_body()
 
     def captureNow_(self, sender):
@@ -433,7 +457,7 @@ class Controller(NSObject):
             self.voice_started_audio = False
             self.running = True
             self.controls["start"].setTitle_("Pause following")
-            self.next_capture = time.monotonic() + self.settings.interval_seconds
+            self.next_capture = 0
             self.capture_context(request_after=True)
         except Exception as error:
             self.pause()
@@ -443,6 +467,11 @@ class Controller(NSObject):
     def pause(self):
         self.running = False
         self.capture_generation += 1
+        if self.capture_token:
+            self.capture_token.cancel()
+        self.finish_screen_capture(self.capture_id)
+        self.context_builder.cancel()
+        self.context_build_pending = self.auto_help_pending = False
         self.capture_request_after = False
         self.pending_manual = False
         self.manual_help_pending = False
@@ -467,32 +496,89 @@ class Controller(NSObject):
         self.capture_busy = True
         self.capture_request_after = request_after
         generation = self.capture_generation
+        identity = self.capture_id = uuid4().hex
+        token = self.capture_token = Cancellation()
         settings = self.settings.model_copy(deep=True)
         root = self.context.repo_root
         goal = self.context.goal
+        hide_for_capture = bool(settings.capture_screen and self.window_sharing and not self.overlay_hidden
+                                and self.window.isVisible() and not self.window.isMiniaturized())
         if settings.capture_screen:
+            self.capture_frame_pending = True
+            self.controls["sharing"].setEnabled_(False)
+        if hide_for_capture:
+            self.capture_hidden_for = identity
             self.window.orderOut_(None)
-        self.status.setStringValue_("Reading the current work…")
+        self.status.setStringValue_("Reading the screen with Astra low / Fast…" if settings.capture_screen else "Reading the selected project…")
+
+        finish_scheduled = threading.Event()
+
+        def finish_capture():
+            if not finish_scheduled.is_set():
+                finish_scheduled.set()
+                # Dispatch directly to AppKit; do not wait for the 100 ms event poll.
+                AppHelper.callAfter(self.finish_screen_capture, identity)
 
         def worker():
-            result = {"type": "capture_done", "generation": generation, "root": root, "at": time.time()}
+            result = {"type": "capture_done", "generation": generation, "capture_id": identity, "root": root, "at": time.time()}
+            started = time.monotonic()
             try:
+                try:
+                    token.check()
+                    if settings.capture_screen:
+                        if hide_for_capture:
+                            token.event.wait(0.010)
+                            token.check()
+                        _, path = self.screen.capture(
+                            settings.screen_region,
+                            keep_image=True, full_resolution=True, on_captured=finish_capture,
+                        )
+                finally:
+                    # Also restore on screenshot failure or cancellation before capture.
+                    finish_capture()
                 if settings.capture_screen:
-                    result["screen"] = self.screen.capture(
-                        settings.screen_region,
-                        keep_image=settings.quick.send_images or settings.deep.send_images,
-                        on_captured=lambda: self.events.put({"type": "screen_taken"}),
-                    )
+                    token.check()
+                    progress = Progress(lambda text: None, self.trace, request_id=identity, lane="ocr")
+                    reading = read_screen(path, provider_for(settings.ocr, self.credentials), token, progress, at=result["at"])
+                    result["screen"] = (reading.visible_text, path)
+                    result["reading"] = reading.model_dump()
                 if root:
+                    token.check()
                     result["files"], result["files_message"] = read_project(root, focus=goal)
+                token.check()
+            except Cancelled:
+                result["cancelled"] = True
             except Exception as error:
                 result["error"] = redact(str(error))[:450]
+            result["seconds"] = time.monotonic() - started
+            self.trace.record("screen_reading_finished", request_id=identity, lane="ocr",
+                              outcome="cancelled" if result.get("cancelled") else "error" if result.get("error") else "success",
+                              elapsed_ms=round(result["seconds"] * 1000))
             self.events.put(result)
 
-        # Hide only this window before the screenshot, then do OCR off the AppKit thread.
-        timer = threading.Timer(0.20, worker)
-        timer.daemon = True
-        timer.start()
+        threading.Thread(target=worker, name="otsc-screen-reader", daemon=True).start()
+
+    @objc.python_method
+    def finish_screen_capture(self, identity):
+        if identity != self.capture_id:
+            return
+        self.capture_frame_pending = False
+        self.controls["sharing"].setEnabled_(True)
+        if identity and self.capture_hidden_for == identity:
+            self.capture_hidden_for = ""
+            if not self.closed and not self.overlay_hidden:
+                self.window.orderFrontRegardless()
+
+    def toggleSharing_(self, sender):
+        if self.capture_frame_pending:
+            return
+        self.window_sharing = not self.window_sharing
+        self.window.setSharingType_(A.NSWindowSharingReadOnly if self.window_sharing else A.NSWindowSharingNone)
+        self.controls["sharing"].setTitle_("Sharing: On" if self.window_sharing else "Sharing: Off")
+        self.status.setStringValue_(
+            "Window sharing on. Screenshots use a 10 ms pre-capture wait while the window is hidden."
+            if self.window_sharing else "Window sharing off. Screenshots leave the window visible."
+        )
 
     def selectProject_(self, sender):
         if self.demo:
@@ -527,31 +613,30 @@ class Controller(NSObject):
     def tick_(self, timer):
         if self.closed:
             return
-        for source in (self.events, self.coordinator.events):
+        for source in (self.events, self.context_builder.events, self.coordinator.events):
             for _ in range(100):
                 try:
                     event = source.get_nowait()
                 except queue.Empty:
                     break
                 self.handle_event(event)
-        if self.running and time.monotonic() >= self.next_capture:
-            self.next_capture = time.monotonic() + self.settings.interval_seconds
-            if self.manual_help_pending or self.voice_recording:
-                pass
-            elif self.demo:
+        now = time.monotonic()
+        if self.running and now >= self.next_capture:
+            if self.demo:
+                self.next_capture = now + self.settings.interval_seconds
                 self.coordinator.request()
-            else:
+            elif not self.capture_busy:
                 self.capture_context(request_after=True)
-        if (
-            self.running
-            and self.buffered_context
-            and not self.coordinator.active_lanes
-            and not self.capture_busy
-            and not self.manual_help_pending
-            and not self.voice_recording
-        ):
-            self.flush_context()
-            self.coordinator.request()
+        if not self.demo:
+            if self.running or self.context_build_pending:
+                if self.context_builder.request():
+                    self.context_build_pending = False
+            if (self.running or self.auto_help_pending) and not self.manual_help_pending and not self.voice_recording:
+                if not self.coordinator.active_lanes and now >= self.next_answer_attempt:
+                    requested = self.coordinator.request()
+                    self.next_answer_attempt = now + (0.1 if requested else 1)
+                    if requested or self.context.revision == self.coordinator.last_requested_revision:
+                        self.auto_help_pending = False
         if self.options.smoke_test:
             self.smoke_tick()
         elif not self.demo:
@@ -564,20 +649,23 @@ class Controller(NSObject):
             self.midi_action(event["action"])
         elif kind == "midi_status":
             self.status.setStringValue_(event["message"])
-        elif kind == "screen_taken":
-            if not self.overlay_hidden:
-                self.window.orderFront_(None)
         elif kind == "capture_done":
-            self.capture_busy = False
-            if not self.closed and not self.overlay_hidden:
-                self.window.orderFront_(None)
-            if event["generation"] != self.capture_generation:
+            if event.get("capture_id") != self.capture_id:
                 return
-            if self.coordinator.active_lanes and not self.pending_manual:
-                self.buffered_context.append(event)
-                self.buffered_context = self.buffered_context[-80:]
+            self.capture_busy = False
+            self.capture_token = None
+            if event["generation"] != self.capture_generation or event.get("cancelled"):
+                return
+            self.apply_context_event(event)
+            if event.get("error"):
+                self.capture_failures += 1
+                self.next_capture = time.monotonic() + min(60, 2 ** min(self.capture_failures, 6))
             else:
-                self.apply_context_event(event)
+                self.capture_failures = 0
+                # Only error retries and screen-disabled project polling wait.
+                # Successful visual reading starts the next fresh frame immediately.
+                self.next_capture = 0 if self.settings.capture_screen else time.monotonic() + self.settings.interval_seconds
+                self.context_build_pending = True
             self.status.setStringValue_(
                 event.get("error") or event.get("files_message") or "Current screen added to context."
             )
@@ -585,13 +673,13 @@ class Controller(NSObject):
             self.capture_request_after = False
             if self.manual_help_pending:
                 self.send_manual_help_if_ready()
-            elif should_request and not self.coordinator.active_lanes:
-                self.flush_context()
-                self.coordinator.request()
+            if should_request and not event.get("error"):
+                self.auto_help_pending = True
             self.refresh_body()
         elif kind == "project":
             if event["generation"] == self.capture_generation:
                 self.context.set_verified_files(event["root"], event["files"])
+                self.context_build_pending = self.running
                 self.status.setStringValue_(event["message"])
                 self.refresh_body()
         elif kind in {"speech", "audio_status", "audio_error", "audio_flushed"}:
@@ -610,11 +698,7 @@ class Controller(NSObject):
                     else:
                         self.send_manual_help_if_ready()
             elif kind == "speech":
-                if self.coordinator.active_lanes:
-                    self.buffered_context.append(event)
-                    self.buffered_context = self.buffered_context[-80:]
-                else:
-                    self.apply_context_event(event)
+                self.apply_context_event(event)
                 self.status.setStringValue_(f"Heard {event['speaker']} through {event['channel']}. Context updated.")
                 self.refresh_body()
             else:
@@ -626,9 +710,16 @@ class Controller(NSObject):
                     self.voice_started_audio = False
                     self.finish_voice_capture()
                 self.status.setStringValue_(event["message"])
+        elif kind == "context_built":
+            changed = self.context_builder.accept(event)
+            if changed:
+                self.refresh_body()
+            elif event.get("error") and not event["job"][2].event.is_set():
+                self.status.setStringValue_("Context update failed; keeping existing context. " + event["error"])
         elif kind == "started":
             self.status.setStringValue_(f"Quick and deep assistance started · context {event['revision']}.")
-        elif kind == "progress" and event["request_id"] == self.coordinator.request_id:
+        elif (kind == "progress" and event["request_id"] == self.coordinator.request_id
+              and event["lane"] in self.coordinator.active_lanes):
             self.status.setStringValue_(event["lane"].capitalize() + ": " + event["message"][:280])
             if (
                 event["lane"] == "quick"
@@ -636,7 +727,7 @@ class Controller(NSObject):
                 and not self.coordinator.pinned
                 and not self.summary.selectedRange().length
                 and self.coordinator.published_lane < 1
-                and self.context.revision == self.coordinator.last_requested_revision
+                and self.context.task_revision == self.coordinator.last_requested_task_revision
             ):
                 retain_text(self.summary, "Quick thought\n\n" + event["message"][7:])
         elif kind in {"result", "error", "cancelled"}:
@@ -670,7 +761,8 @@ class Controller(NSObject):
         else:
             if "screen" in event:
                 text, path = event["screen"]
-                self.context.add("screen", text, "screen", image_path=path, confidence="uncertain", at=event.get("at"))
+                self.context.add("screen", text, "screen", image_path=path, confidence="uncertain", at=event.get("at"),
+                                 reading=event.get("reading"), keep_repeats=True)
             if "files" in event:
                 self.context.set_verified_files(event["root"], event["files"])
 
@@ -710,10 +802,14 @@ class Controller(NSObject):
         response = self.coordinator.current
         view = str(self.view.titleOfSelectedItem())
         artifact = self.current_artifact()
-        self.graph_scroll.setHidden_(True)
-        self.body_scroll.setHidden_(False)
+        show_diagram = bool(view == "Artifact" and response and artifact and artifact.kind == "diagram")
+        self.graph_scroll.setHidden_(not show_diagram)
+        self.body_scroll.setHidden_(show_diagram)
         if view == "Context":
-            text = "\n\n".join(
+            text = "Working context (revisable, source-linked)\n\n" + "\n".join(
+                f"{item.kind} · {item.basis} · {', '.join(item.source_ids)}\n{item.text}"
+                for item in self.context.context_items.values()
+            ) + "\n\nCaptured observations\n\n" + "\n\n".join(
                 f"{o.id} · {o.channel} · {o.speaker} · {o.confidence}\n{o.text}" for o in self.context.observations
             )
         elif view == "Observed files":
@@ -723,7 +819,8 @@ class Controller(NSObject):
                     location = (
                         f"starts at line {fragment.first_line}" if fragment.first_line else "line position unknown"
                     )
-                    excerpts.append(f"{path} · excerpt {index} · {location}\n{fragment.content}")
+                    state = " · retired from working context" if path in self.context.retired_files else ""
+                    excerpts.append(f"{path} · excerpt {index} · {location}{state}\n{fragment.content}")
             text = "Observed on screen — partial files\n\n" + (
                 "\n\n".join(excerpts) or "No file excerpts identified yet."
             )
@@ -787,8 +884,6 @@ class Controller(NSObject):
                 )
             if artifact.kind == "diagram":
                 self.graph.artifact = artifact
-                self.graph_scroll.setHidden_(False)
-                self.body_scroll.setHidden_(True)
                 self.relayout()
             text = (
                 basis
@@ -895,6 +990,7 @@ class Controller(NSObject):
         self.pause()
         self.context = restore_context(document, authorized_project=authorized)
         self.coordinator.context = self.context
+        self.context_builder.context = self.context
         self.coordinator.current = document.current
         self.coordinator.history = list(document.history)
         self.coordinator.pending = None
@@ -1218,6 +1314,7 @@ class Controller(NSObject):
         self.checkpoint_if_enabled(force=True)
         self.timer.invalidate()
         self.coordinator.close()
+        self.context_builder.close()
         if self.midi:
             self.midi.close()
         self.screen.close()
@@ -1258,6 +1355,12 @@ class Controller(NSObject):
                 self.toggleClickThrough_(None)
                 self.toggleClickThrough_(None)
                 assert self.copy_text() == before
+                assert not self.window_sharing and self.window.sharingType() == A.NSWindowSharingNone
+                self.toggleSharing_(None)
+                assert self.window_sharing and self.window.sharingType() == A.NSWindowSharingReadOnly
+                self.toggleSharing_(None)
+                assert not self.window_sharing and self.window.sharingType() == A.NSWindowSharingNone
+                assert self.copy_text() == before
                 origin = self.window.frame().origin
                 self.midi_action("left")
                 assert self.window.frame().origin.x == origin.x - 50
@@ -1296,13 +1399,13 @@ class Controller(NSObject):
                         "channel": "system",
                         "speaker": "other_people",
                         "text": "What about a generator input?",
-                        "at": 12345.0,
+                        "at": time.time(),
                     }
                 )
-                assert self.context.revision == revision and len(self.buffered_context) == 1
+                assert self.context.revision > revision and not self.buffered_context
                 self.coordinator.active_lanes.clear()
                 self.flush_context()
-                assert self.context.observations[-1].at == 12345.0
+                assert self.context.observations[-1].text == "What about a generator input?"
                 self.audio = None
                 self.context.set_task_details(["Keep missing data distinct from zero"], ["Use None for empty input"])
                 saved_copy = self.copy_text()
@@ -1334,10 +1437,11 @@ class Controller(NSObject):
                                 "clean copy",
                                 "selection retained on resize",
                                 "click-through retains artifact",
+                                "window sharing defaults off and toggles without changing the artifact",
                                 "native diagram",
                                 "settings construction",
                                 "collaborator response and observed diff",
-                                "new audio queued without starving deep work",
+                                "new audio updates context without starving deep work",
                                 "MIDI window controls retain content and hidden state",
                                 "saved task restores exact artifacts and constraints with capture paused",
                             ],

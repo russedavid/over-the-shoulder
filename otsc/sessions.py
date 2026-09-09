@@ -9,7 +9,7 @@ from typing import Literal
 from pydantic import Field
 
 from otsc.context import ContextStore
-from otsc.models import Artifact, Assistance, Observation, ObservedFile, Record, safe_relative_path
+from otsc.models import Artifact, Assistance, ContextItem, Observation, ObservedFile, Record, safe_relative_path
 from otsc.privacy import app_directory, atomic_private_write, redact
 
 MAX_CHECKPOINT_BYTES = 8_000_000
@@ -18,13 +18,17 @@ MAX_CHECKPOINT_BYTES = 8_000_000
 class ContextCheckpoint(Record):
     goal: str = Field(max_length=10000)
     project_hint: str = Field(max_length=2000)
-    observations: list[Observation] = Field(max_length=100)
+    observations: list[Observation] = Field(max_length=1000)
     files: dict[str, list[ObservedFile]]
     previous_task: str
     previous_summary: str
     open_questions: list[str]
     constraints: list[str] = Field(default_factory=list, max_length=20)
     decisions: list[str] = Field(default_factory=list, max_length=20)
+    context_items: list[ContextItem] = Field(default_factory=list, max_length=80)
+    retained_sources: list[Observation] = Field(default_factory=list, max_length=1000)
+    retired_files: dict[str, dict] = Field(default_factory=dict)
+    previous_answer: str = Field(default="{}", max_length=300000)
 
 
 class SessionDocument(Record):
@@ -54,6 +58,10 @@ def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", 
             open_questions=list(context.open_questions),
             constraints=list(context.constraints),
             decisions=list(context.decisions),
+            context_items=list(context.context_items.values()),
+            retained_sources=[o.model_copy(update={"image_path": ""}, deep=True) for o in context.retained_sources.values()],
+            retired_files=context.retired_files,
+            previous_answer=context.previous_answer,
         )
         return SessionDocument(
             saved_at=time.time(),
@@ -115,9 +123,11 @@ def load_session(path):
         ):
             raise ValueError("Session contains an invalid proposal base")
     # Paths in an imported file are data, never permission to open a local image.
-    for observation in document.context.observations:
+    for observation in [*document.context.observations, *document.context.retained_sources]:
         observation.image_path = ""
         observation.text = redact(observation.text)
+    if not isinstance(json.loads(document.context.previous_answer), dict):
+        raise ValueError("Saved previous answer must be an object")
     return document
 
 
@@ -137,4 +147,9 @@ def restore_context(document, *, authorized_project=""):
     context.verified_files = {}  # Always re-read authorized source before treating it as current.
     context.restored = True
     context.revision = 1
+    context.task_revision = context.evidence_revision = 1
+    context.context_items = {item.id: item.model_copy(deep=True) for item in saved.context_items}
+    context.retained_sources = {o.id: o.model_copy(deep=True) for o in saved.retained_sources}
+    context.retired_files = dict(saved.retired_files)
+    context.previous_answer = saved.previous_answer
     return context

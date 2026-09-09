@@ -35,7 +35,7 @@ from otsc.capture import AudioCapture
 from otsc.models import Assistance
 from otsc.native import FlippedView, frame, label
 from otsc.privacy import private_write
-from otsc.settings import ModelChoice, Settings
+from otsc.settings import Settings
 
 GOAL = "Make the mean helper handle empty input without confusing missing data with zero."
 
@@ -56,8 +56,6 @@ class LiveRun(NSObject):
             configured=True,
             goal=GOAL,
             transcription="local",
-            quick=ModelChoice(provider="codex", model="gpt-5.3-codex-spark", reasoning="low"),
-            deep=ModelChoice(provider="codex", model="gpt-5.5", reasoning="low", send_images=True),
         )
         self.fixture = A.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(100, 180, 850, 240), A.NSWindowStyleMaskTitled, A.NSBackingStoreBuffered, False
@@ -162,7 +160,7 @@ class LiveRun(NSObject):
                     self.controller.helpNow_(None)
                     self.requested = time.monotonic()
                 return
-            if self.controller.manual_help_pending or self.controller.capture_busy:
+            if self.controller.manual_help_pending:
                 return
             coordinator = self.controller.coordinator
             if coordinator.published_lane == 0 and not self.quick_seen:
@@ -173,8 +171,14 @@ class LiveRun(NSObject):
                 response = coordinator.current
                 self.timings["deep_seconds"] = round(time.monotonic() - self.requested, 2)
                 private_write(self.directory / "deep.json", response.model_dump_json(indent=2))
+                delivered = [*coordinator.history, response]
+                private_write(self.directory / "delivered-history.json", json.dumps([r.model_dump() for r in delivered], indent=2))
                 assert response.artifacts, "Deep response supplied no artifact"
-                assert any(c.action in {"challenge", "answer"} for c in response.conversation)
+                # A fresh OCR result may preserve the proposal without repeating
+                # an already-addressed question. Check the delivered conversation.
+                other_sources = {o.id for o in context.observations if o.speaker == "other_people"}
+                assert any(c.source_id in other_sources and c.action in {"challenge", "answer"}
+                           for r in delivered for c in r.conversation), "The other speaker's question was never addressed"
                 assert any(a.kind == "code" and "None" in a.content for a in response.artifacts)
                 self.controller.save_view_image(self.directory / "window.png")
                 current_code = self.controller.copy_text()

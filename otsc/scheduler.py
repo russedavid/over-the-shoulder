@@ -63,6 +63,7 @@ class Coordinator:
         self.request_id = ""
         self.published_lane = -1
         self.last_requested_revision = -1
+        self.last_requested_task_revision = -1
         self.current: Assistance | None = None
         self.pending: Assistance | None = None
         self.pending_version = None
@@ -70,6 +71,7 @@ class Coordinator:
         self.history = []
         self.closed = False
         self.calls = []
+        self.limit_notice_at = 0
         self.hourly_limit = hourly_limit
         self.active_lanes = set()
         self.trace = trace
@@ -80,21 +82,27 @@ class Coordinator:
     def request(self, *, manual=False):
         if self.closed:
             return False
+        if not manual and self.active_lanes:
+            return False
         snapshot = self.context.snapshot()
         if not snapshot.observations:
-            self.events.put({"type": "notice", "message": "Add task context or capture the current work first."})
+            if manual:
+                self.events.put({"type": "notice", "message": "Add task context or capture the current work first."})
             return False
         if not manual and snapshot.revision == self.last_requested_revision:
             return False
         now = time.monotonic()
         self.calls = [t for t in self.calls if now - t < 3600]
         if len(self.calls) >= self.hourly_limit:
-            self.events.put({"type": "notice", "message": "The configured hourly assistance limit has been reached."})
+            if manual or now >= self.limit_notice_at:
+                self.events.put({"type": "notice", "message": "The configured hourly assistance limit has been reached."})
+                self.limit_notice_at = now + 60
             return False
         self.cancel()
         self.request_id = uuid4().hex
         self.published_lane = -1
         self.last_requested_revision = snapshot.revision
+        self.last_requested_task_revision = snapshot.task_revision
         self.calls.append(now)
         self.active_lanes = set(self.queues)
         self.events.put({"type": "started", "request_id": self.request_id, "revision": snapshot.revision})
@@ -163,7 +171,13 @@ class Coordinator:
                         artifacts=len(response.artifacts),
                     )
                 self.events.put(
-                    {"type": "result", "job": job, "response": response, "elapsed": time.monotonic() - job.started}
+                    {
+                        "type": "result",
+                        "job": job,
+                        "response": response,
+                        "elapsed": time.monotonic() - job.started,
+                        "delivery_notes": response._delivery_notes,
+                    }
                 )
             except Cancelled:
                 if self.trace:
@@ -200,7 +214,10 @@ class Coordinator:
             return False
         if event["type"] in {"result", "error", "cancelled"}:
             self.active_lanes.discard(job.lane)
-        if job.snapshot.revision != self.context.revision or job.token.event.is_set():
+        # New passive evidence is for the next request. It must not starve the
+        # current answer. Explicit task/project edits and newer requests still
+        # invalidate old work; each delivered artifact keeps its immutable base.
+        if job.snapshot.task_revision != self.context.task_revision or job.token.event.is_set():
             if self.trace:
                 self.trace.record("result_discarded", request_id=job.request_id, lane=job.lane, reason="stale_context")
             return False
@@ -227,10 +244,10 @@ class Coordinator:
         if self.current:
             self.history.append(self.current)
             self.history = self.history[-12:]
-        self.context.integrate(response, replace_open_questions=job.lane == "deep")
+        self.context.integrate(response, replace_open_questions=job.lane == "deep", sources=job.snapshot.observations)
         if self.pinned:
             self.pending = response
-            self.pending_version = (job.request_id, job.snapshot.session_id, job.snapshot.revision)
+            self.pending_version = (job.request_id, job.snapshot.session_id, job.snapshot.task_revision)
         else:
             self.current = response
         if self.trace:
@@ -256,7 +273,7 @@ class Coordinator:
     def toggle_pin(self):
         self.pinned = not self.pinned
         if not self.pinned and self.pending:
-            if self.pending_version == (self.request_id, self.context.session_id, self.context.revision):
+            if self.pending_version == (self.request_id, self.context.session_id, self.context.task_revision):
                 self.current = self.pending
             self.pending, self.pending_version = None, None
 

@@ -51,6 +51,7 @@ FIELDS = {
     "release_id",
     "config_hash",
     "reasoning",
+    "requested_service_tier",
     "image_hash",
 }
 
