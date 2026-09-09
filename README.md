@@ -43,6 +43,24 @@ uv sync --python 3.13 --extra mac --extra local-asr
 
 Local transcription loads its model on first use and may download model weights. No model download or audio transcription starts during ordinary app launch.
 
+## MIDI controls
+
+The original note numbers are supported through CoreMIDI. The app connects to the first input and reconnects when a controller is plugged in. Only note-on presses with nonzero velocity trigger actions; the original 150 ms debounce is retained. Set `OTSC_MIDI_PORT` to an exact device name if you need a particular input.
+
+| Note | Action |
+|---|---|
+| 38 / 39 | Start a voice question; press either again to finish and request help. Task context is retained. |
+| 40 / 41 | Make the window smaller / bigger in 50-pixel steps. |
+| 42 / 44 / 45 / 46 | Move left / down / up / right by 50 pixels. |
+| 43 | Hide / show the window. Capture updates respect the hidden state. |
+| 47 | Help now. |
+| 48 | Cycle output views, replacing the former task-mode switch. |
+| 49 | Advance a page; at the end, advance to the next artifact or wrap. |
+| 50 | Capture the current screen. |
+| 51 | Clear and start a new task. |
+
+Voice controls use the configured audio inputs. When following continuously, finishing a voice question keeps that capture running; a standalone voice recording closes its inputs when the question ends. MIDI callbacks enqueue actions for the AppKit thread and do not touch the window from the MIDI thread.
+
 ## Context and proposed changes
 
 Observed files are bounded, versioned **fragments**, with source observations and known line positions. A spoken description cannot become an observed file. When an example replaces a visible excerpt, the app shows an excerpt diff and preserves its partial status.

@@ -12,6 +12,8 @@ The primary user is trying to complete a task and create or change an artifact. 
 
 Use one task-centered interaction model. Coding, system design, diagrams, explanations, and suggested replies are output capabilities within it. A conversation-only response is valid when no artifact change is justified.
 
+Preserve MIDI control support. `otsc/midi.py` retains the original note numbers, debounce, and movement directions; README documents the unified behavior. The former mode-switch note changes output views, not task modes. Keep hide/show, resize, voice controls, and model/capture actions usable without clicking the overlay.
+
 Every generated code artifact needs line-by-line teaching annotations and a separate clean representation. Explanatory annotations must not be silently inserted into the user's code or diffs. Preserve comments that belong to the actual source.
 
 Observed screen/OCR fragments, spoken claims, inferred hypotheses, and verified local files are different evidence. Preserve provenance, completeness, and version. Never present a guessed complete filesystem as an observed one. Suggestions against a partial observation must say so.

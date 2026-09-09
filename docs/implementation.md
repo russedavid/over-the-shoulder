@@ -16,6 +16,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Read-only project selection and host-calculated diffs | `otsc/workspace.py` |
 | Screen OCR, vision frames, microphone/system audio, ASR | `otsc/capture.py` |
 | Native diagrams and SVG | `otsc/diagram.py` |
+| Original MIDI bindings and controller reconnection | `otsc/midi.py` |
 | Synthetic interaction replay | `otsc/demo.py` |
 
 Codex runs `exec` against an ephemeral, filtered source snapshot, with read-only sandboxing, no approvals, no user config/rules, and no web search. It reuses CLI authentication. Responses API, Gemini `streamGenerateContent`, Anthropic Messages with a forced structured tool response, and Groq/compatible Chat Completions share the application contract. HTTP failures are surfaced without automatic provider fallback. No extra engine process or app-server migration was introduced.
@@ -48,9 +49,11 @@ A separate real design request returned a 16-node/21-edge webhook-delivery diagr
 
 When malformed status values were explicitly included in that fixture's requirements, its generated retry predicate used the exact 500–599 bounds. The reviewed patch was applied only in a temporary fixture and passed ten behavioral cases. Help now also has a regression check ensuring newly flushed speech arrives before audio readiness is signaled; microphone/system buffers cover the longest configurable chunk.
 
-The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. The current automated suite has 29 passing tests; the native smoke check also passes.
+The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. After MIDI restoration, the automated suite has 33 passing tests; the native smoke check also passes.
 
 The current local preferences use Codex Spark / GPT-5.5, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed.
+
+MIDI support has been restored from the baseline mappings. CoreMIDI delivery was verified with a virtual destination; no physical controller was connected during that check. Tests cover note filtering, debounce, disconnect/reconnect, and shutdown. Native window checks cover MIDI movement, resize, and hide/show without discarding content. Standalone voice completion stops hardware capture before waiting for transcription.
 
 ## Practical limits
 

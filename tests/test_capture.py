@@ -10,6 +10,50 @@ from unittest.mock import patch
 
 @unittest.skipUnless(sys.platform == "darwin", "Native capture adapters require macOS")
 class CaptureTests(unittest.TestCase):
+    def test_voice_finish_stops_hardware_before_finishing_transcription(self):
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        from otsc.capture import AudioCapture
+        from otsc.settings import Settings
+
+        events = queue.Queue()
+        started = threading.Event()
+        release = threading.Event()
+        closed = []
+
+        class Transcriber:
+            def transcribe(self, samples):
+                started.set()
+                release.wait(2)
+                return "A completed question"
+
+        capture = AudioCapture(Settings(transcription="local"), events)
+        capture.transcriber = Transcriber()
+        capture.mic = SimpleNamespace(stop=lambda: closed.append("stopped"), close=lambda: closed.append("closed"))
+        try:
+            with capture.mic_lock:
+                capture.mic_chunks.append(np.full(8000, 0.1, dtype=np.float32))
+            capture.start()
+            request = capture.flush_for_help(stop_capture=True)
+            self.assertTrue(started.wait(1))
+            self.assertEqual(closed, ["stopped", "closed"])
+            release.set()
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                event = events.get(timeout=2)
+                if event["type"] == "audio_flushed":
+                    self.assertEqual(event["flush_id"], request)
+                    self.assertTrue(event["complete"])
+                    break
+            else:
+                self.fail("Voice completion was not delivered")
+            self.assertTrue(capture.stop_event.wait(1))
+        finally:
+            release.set()
+            capture.stop()
+
     def test_help_flush_delivers_current_speech_before_signalling_readiness(self):
         import numpy as np
 

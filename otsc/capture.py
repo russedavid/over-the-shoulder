@@ -288,10 +288,10 @@ class AudioCapture:
             return
         threading.Thread(target=self._run, name="otsc-audio-capture", daemon=True).start()
 
-    def flush_for_help(self):
+    def flush_for_help(self, *, stop_capture=False):
         request_id = uuid4().hex
         with self.flush_lock:
-            self.flush_request = request_id
+            self.flush_request = (request_id, stop_capture)
         self.wake.set()
         return request_id
 
@@ -329,7 +329,8 @@ class AudioCapture:
                 if self.stop_event.is_set():
                     break
                 with self.flush_lock:
-                    flush_id, self.flush_request = self.flush_request, None
+                    request, self.flush_request = self.flush_request, None
+                flush_id, stop_capture = request or (None, False)
                 with self.mic_lock:
                     chunks = list(self.mic_chunks)
                     self.mic_chunks.clear()
@@ -337,6 +338,14 @@ class AudioCapture:
                     "microphone": np.concatenate(chunks) if chunks else np.array([]),
                     "system": self.system.drain() if self.system else np.array([]),
                 }
+                if stop_capture:
+                    if self.mic:
+                        self.mic.stop()
+                        self.mic.close()
+                        self.mic = None
+                    if self.system:
+                        self.system.stop()
+                        self.system = None
                 for channel, samples in recordings.items():
                     if samples.size < 4000 or np.sqrt(np.mean(samples**2)) < 0.003:
                         continue
@@ -367,6 +376,8 @@ class AudioCapture:
                             and not self.stop_event.is_set(),
                         }
                     )
+                    if stop_capture:
+                        break
         except Exception as error:
             self.events.put({"type": "audio_error", "capture_id": self.id, "message": redact(str(error))})
         finally:

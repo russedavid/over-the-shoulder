@@ -16,6 +16,7 @@ from otsc.capture import AudioCapture, ScreenCapture
 from otsc.context import ContextStore
 from otsc.demo import DemoProvider, seed_demo
 from otsc.diagram import diagram_layout, diagram_svg, edge_geometry
+from otsc.midi import MidiInput
 from otsc.native import FlippedView, button, color, field, frame, label, popup, retain_text, scroll_text
 from otsc.preferences import Preferences
 from otsc.privacy import private_directory, private_write, redact
@@ -95,6 +96,11 @@ class Controller(NSObject):
         self.coordinator = Coordinator(self.context, self.get_provider, hourly_limit=self.settings.hourly_requests)
         self.screen = ScreenCapture()
         self.audio = None
+        self.midi = None
+        self.overlay_hidden = False
+        self.voice_recording = False
+        self.voice_started_audio = False
+        self.stop_voice_after_help = False
         self.running = False
         self.capture_busy = False
         self.capture_generation = 0
@@ -128,6 +134,9 @@ class Controller(NSObject):
             A.NSApp.activateIgnoringOtherApps_(True)
             if not self.demo and not self.settings.configured:
                 self.settings_(None)
+        if not self.demo and not getattr(options, "disable_midi", False):
+            self.midi = MidiInput(self.events)
+            self.midi.start()
         return self
 
     @objc.python_method
@@ -220,6 +229,7 @@ class Controller(NSObject):
             ("Help now", "helpNow:", "\r"),
             ("Settings…", "settings:", ","),
             ("Toggle click-through", "toggleClickThrough:", "i"),
+            ("Hide / show window", "toggleVisibility:", ""),
             ("New task", "newTask:", "n"),
             ("Load synthetic code example", "demoCode:", ""),
             ("Load synthetic design example", "demoDesign:", ""),
@@ -317,7 +327,7 @@ class Controller(NSObject):
         self.pending_manual = True
         self.awaiting_audio_flush = None
         if self.audio and not self.audio.stop_event.is_set() and self.settings.transcription != "disabled":
-            self.awaiting_audio_flush = self.audio.flush_for_help()
+            self.awaiting_audio_flush = self.audio.flush_for_help(stop_capture=self.stop_voice_after_help)
         self.capture_context(request_after=False)
 
     @objc.python_method
@@ -327,6 +337,15 @@ class Controller(NSObject):
             self.pending_manual = False
             self.flush_context()
             self.coordinator.request(manual=True)
+            self.finish_voice_capture()
+
+    @objc.python_method
+    def finish_voice_capture(self):
+        if self.stop_voice_after_help:
+            self.stop_voice_after_help = False
+            if self.audio and not self.running:
+                self.audio.stop()
+                self.audio = None
 
     def addContext_(self, sender):
         text = str(self.input.string()).strip()
@@ -370,8 +389,10 @@ class Controller(NSObject):
             return
         self.context.set_goal(str(self.goal.stringValue()))
         try:
-            self.audio = AudioCapture(self.settings, self.events, self.credentials)
-            self.audio.start()
+            if self.audio is None or self.audio.stop_event.is_set():
+                self.audio = AudioCapture(self.settings, self.events, self.credentials)
+                self.audio.start()
+            self.voice_started_audio = False
             self.running = True
             self.controls["start"].setTitle_("Pause following")
             self.next_capture = time.monotonic() + self.settings.interval_seconds
@@ -388,6 +409,9 @@ class Controller(NSObject):
         self.pending_manual = False
         self.manual_help_pending = False
         self.awaiting_audio_flush = None
+        self.voice_recording = False
+        self.voice_started_audio = False
+        self.stop_voice_after_help = False
         self.flush_context()
         if self.audio:
             self.audio.stop()
@@ -474,7 +498,7 @@ class Controller(NSObject):
                 self.handle_event(event)
         if self.running and time.monotonic() >= self.next_capture:
             self.next_capture = time.monotonic() + self.settings.interval_seconds
-            if self.manual_help_pending:
+            if self.manual_help_pending or self.voice_recording:
                 pass
             elif self.demo:
                 self.coordinator.request()
@@ -486,6 +510,7 @@ class Controller(NSObject):
             and not self.coordinator.active_lanes
             and not self.capture_busy
             and not self.manual_help_pending
+            and not self.voice_recording
         ):
             self.flush_context()
             self.coordinator.request()
@@ -495,11 +520,16 @@ class Controller(NSObject):
     @objc.python_method
     def handle_event(self, event):
         kind = event["type"]
-        if kind == "screen_taken":
-            self.window.orderFront_(None)
+        if kind == "midi":
+            self.midi_action(event["action"])
+        elif kind == "midi_status":
+            self.status.setStringValue_(event["message"])
+        elif kind == "screen_taken":
+            if not self.overlay_hidden:
+                self.window.orderFront_(None)
         elif kind == "capture_done":
             self.capture_busy = False
-            if not self.closed:
+            if not self.closed and not self.overlay_hidden:
                 self.window.orderFront_(None)
             if event["generation"] != self.capture_generation:
                 return
@@ -533,6 +563,7 @@ class Controller(NSObject):
                     if not event["complete"]:
                         self.manual_help_pending = False
                         self.pending_manual = False
+                        self.finish_voice_capture()
                         self.status.setStringValue_(
                             "Recent speech could not be finished. Check the audio settings; the current screen is still available."
                         )
@@ -551,6 +582,9 @@ class Controller(NSObject):
                     self.manual_help_pending = False
                     self.pending_manual = False
                     self.awaiting_audio_flush = None
+                    self.voice_recording = False
+                    self.voice_started_audio = False
+                    self.finish_voice_capture()
                 self.status.setStringValue_(event["message"])
         elif kind == "started":
             self.status.setStringValue_(f"Quick and deep assistance started · context {event['revision']}.")
@@ -778,7 +812,101 @@ class Controller(NSObject):
             else "Window interaction restored."
         )
 
+    def toggleVisibility_(self, sender):
+        self.overlay_hidden = not self.overlay_hidden
+        if self.overlay_hidden:
+            self.window.orderOut_(None)
+        else:
+            self.window.deminiaturize_(None)
+            self.window.orderFrontRegardless()
+
+    @objc.python_method
+    def midi_action(self, action):
+        handlers = {
+            "help": self.helpNow_,
+            "capture": self.captureNow_,
+            "new_task": self.newTask_,
+            "visibility": self.toggleVisibility_,
+        }
+        if action in handlers:
+            handlers[action](None)
+        elif action in {"left", "right", "up", "down"}:
+            rect = self.window.frame()
+            dx, dy = {"left": (-50, 0), "right": (50, 0), "up": (0, 50), "down": (0, -50)}[action]
+            self.window.setFrameOrigin_((rect.origin.x + dx, rect.origin.y + dy))
+        elif action in {"smaller", "bigger"}:
+            rect = self.window.frame()
+            step = 50 if action == "bigger" else -50
+            minimum = self.window.minSize()
+            self.window.setFrame_display_(
+                (
+                    rect.origin,
+                    (max(minimum.width, rect.size.width + step), max(minimum.height, rect.size.height + step)),
+                ),
+                True,
+            )
+        elif action == "next_view":
+            self.view.selectItemAtIndex_((self.view.indexOfSelectedItem() + 1) % self.view.numberOfItems())
+            self.changeView_(None)
+        elif action == "next_page":
+            self.advance_page()
+        elif action in {"voice_question", "voice_followup"}:
+            self.voice_question()
+
+    @objc.python_method
+    def advance_page(self):
+        scroll = self.graph_scroll if not self.graph_scroll.isHidden() else self.body_scroll
+        clip = scroll.contentView()
+        bounds = clip.bounds()
+        total = scroll.documentView().bounds().size.height
+        if bounds.origin.y + bounds.size.height < total - 2:
+            clip.scrollToPoint_(
+                (bounds.origin.x, min(total - bounds.size.height, bounds.origin.y + max(40, bounds.size.height - 24)))
+            )
+            scroll.reflectScrolledClipView_(clip)
+            return
+        if str(self.view.titleOfSelectedItem()) == "Artifact" and self.displayed_artifacts:
+            self.artifacts.selectItemAtIndex_(
+                (self.artifacts.indexOfSelectedItem() + 1) % len(self.displayed_artifacts)
+            )
+            self.chooseArtifact_(None)
+        scroll = self.graph_scroll if not self.graph_scroll.isHidden() else self.body_scroll
+        scroll.contentView().scrollToPoint_((0, 0))
+        scroll.reflectScrolledClipView_(scroll.contentView())
+
+    @objc.python_method
+    def voice_question(self):
+        if self.demo:
+            self.status.setStringValue_("Voice capture is disabled in the synthetic demo.")
+            return
+        if self.manual_help_pending:
+            return
+        if self.voice_recording:
+            self.voice_recording = False
+            self.stop_voice_after_help = self.voice_started_audio
+            self.voice_started_audio = False
+            self.helpNow_(None)
+            return
+        if not self.settings.configured:
+            self.settings_(None)
+            return
+        if not (self.settings.microphone or self.settings.system_audio):
+            self.status.setStringValue_("Enable a microphone or system-audio input in Settings for voice capture.")
+            return
+        try:
+            needs_audio = self.audio is None or self.audio.stop_event.is_set()
+            self.voice_started_audio = needs_audio and not self.running
+            if needs_audio:
+                self.audio = AudioCapture(self.settings, self.events, self.credentials)
+                self.audio.start()
+            self.voice_recording = True
+            self.status.setStringValue_("Listening. Press MIDI 38 or 39 again to finish the question and ask for help.")
+        except Exception as error:
+            self.voice_recording = False
+            self.status.setStringValue_(redact(str(error)))
+
     def applicationShouldHandleReopen_hasVisibleWindows_(self, app, visible):
+        self.overlay_hidden = False
         self.window.setIgnoresMouseEvents_(False)
         self.window.setAlphaValue_(1.0)
         self.window.makeKeyAndOrderFront_(None)
@@ -843,6 +971,8 @@ class Controller(NSObject):
         self.pause()
         self.timer.invalidate()
         self.coordinator.close()
+        if self.midi:
+            self.midi.close()
         self.screen.close()
         if not self.demo:
             self.settings.goal = self.context.goal
@@ -881,6 +1011,20 @@ class Controller(NSObject):
                 self.toggleClickThrough_(None)
                 self.toggleClickThrough_(None)
                 assert self.copy_text() == before
+                origin = self.window.frame().origin
+                self.midi_action("left")
+                assert self.window.frame().origin.x == origin.x - 50
+                self.midi_action("right")
+                assert self.window.frame().origin.x == origin.x
+                self.midi_action("bigger")
+                self.midi_action("smaller")
+                assert self.copy_text() == before
+                self.midi_action("visibility")
+                assert not self.window.isVisible()
+                self.handle_event({"type": "screen_taken"})
+                assert not self.window.isVisible()
+                self.midi_action("visibility")
+                assert self.window.isVisible()
                 self.save_view_image(directory / "code.png")
                 self.body.setSelectedRange_((0, 0))
                 request_id = self.coordinator.request_id
@@ -935,6 +1079,7 @@ class Controller(NSObject):
                                 "settings construction",
                                 "collaborator response and observed diff",
                                 "new audio queued without starving deep work",
+                                "MIDI window controls retain content and hidden state",
                             ],
                             "live_capture": False,
                             "live_api_calls": False,

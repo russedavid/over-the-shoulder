@@ -77,7 +77,7 @@ class LiveRun(NSObject):
         settings.screen_region = (int(origin.x), int(screen_height - origin.y - 240), 850, 240)
         with patch("otsc.app.load_settings", return_value=settings):
             self.controller = Controller.alloc().initWithOptions_(
-                SimpleNamespace(demo=False, design_demo=False, smoke_test=None)
+                SimpleNamespace(demo=False, design_demo=False, smoke_test=None, disable_midi=True)
             )
         self.fixture.orderFront_(None)
         audio = AudioCapture(settings, self.controller.events)
