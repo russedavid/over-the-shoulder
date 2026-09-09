@@ -19,6 +19,22 @@ def response(snapshot, summary="A useful response"):
 
 
 class ContextTests(unittest.TestCase):
+    def test_a_code_slice_is_not_mistaken_for_a_changing_clock(self):
+        c = ContextStore()
+        c.add("screen", "values[1:20]", "screen")
+        self.assertIsNotNone(c.add("screen", "values[1:30]", "screen"))
+
+    def test_unresolved_questions_survive_quick_answers_and_can_be_resolved_by_deep_work(self):
+        c = ContextStore()
+        c.set_goal("Build it")
+        deep = response(c.snapshot())
+        deep.open_questions = ["What is the retry limit?"]
+        c.integrate(deep)
+        c.integrate(response(c.snapshot()), replace_open_questions=False)
+        self.assertEqual(c.snapshot().open_questions, ("What is the retry limit?",))
+        c.integrate(response(c.snapshot()))
+        self.assertEqual(c.snapshot().open_questions, ())
+
     def test_same_screen_and_clock_changes_do_not_trigger_new_work(self):
         c = ContextStore()
         c.add("screen", "editor.py\nclock 12:01\nreturn value", "screen")
@@ -89,6 +105,22 @@ class ContextTests(unittest.TestCase):
 
 
 class SchedulerTests(unittest.TestCase):
+    def test_unpin_does_not_promote_a_pending_answer_from_an_old_context(self):
+        c = ContextStore()
+        c.set_goal("First")
+        coordinator = Coordinator(c, lambda lane: None)
+        try:
+            coordinator.pinned = True
+            coordinator.pending = response(c.snapshot())
+            coordinator.pending_version = (coordinator.request_id, c.session_id, c.revision)
+            c.set_goal("Second")
+            coordinator.toggle_pin()
+            self.assertIsNone(coordinator.current)
+            self.assertIsNone(coordinator.pending)
+        finally:
+            coordinator.close()
+        self.assertFalse(coordinator.request(manual=True))
+
     def wait_results(self, coordinator, count=1, timeout=2):
         results, deadline = [], time.monotonic() + timeout
         while len(results) < count and time.monotonic() < deadline:

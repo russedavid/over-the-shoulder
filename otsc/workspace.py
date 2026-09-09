@@ -3,6 +3,7 @@
 import difflib
 import json
 import os
+import re
 import stat
 import subprocess
 from pathlib import Path
@@ -140,9 +141,54 @@ def materialize_snapshot(directory: Path, files: dict[str, str]):
 
 def derive_patches(response: Assistance, files: dict[str, str]) -> Assistance:
     """The host computes verified diffs from complete replacements and the exact input snapshot."""
-    for artifact in response.artifacts:
+    fragment_diffs = []
+    for artifact in list(response.artifacts):
         if artifact.kind == "patch" and artifact.basis == "verified_file":
             raise ValueError("Return complete annotated replacement code; the app computes the verified diff")
+        if artifact.kind == "code" and artifact.basis == "observed_fragment":
+            fragment = next(
+                (
+                    f
+                    for f in response.observed_files
+                    if f.path == artifact.path and set(f.source_ids) <= set(artifact.source_ids)
+                ),
+                None,
+            )
+            if fragment and fragment.content != artifact.content:
+                before = fragment.content.splitlines(keepends=True)
+                after = artifact.content.splitlines(keepends=True)
+                raw = difflib.unified_diff(before, after, fromfile="a/" + fragment.path, tofile="b/" + fragment.path)
+                excerpt = "".join(
+                    line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in raw
+                )
+                offset = (fragment.first_line or 1) - 1
+                if offset:
+                    excerpt = re.sub(
+                        r"(?m)^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@",
+                        lambda m: f"@@ -{int(m[1]) + offset}{m[2] or ''} +{int(m[3]) + offset}{m[4] or ''} @@",
+                        excerpt,
+                    )
+                notes = {n.line + offset: n.explanation for n in artifact.annotations}
+                from otsc.models import Artifact
+
+                fragment_diffs.append(
+                    Artifact(
+                        id=artifact.id + "-observed-diff",
+                        kind="patch",
+                        title="Changes to observed excerpt"
+                        + (" (excerpt-relative lines)" if fragment.first_line is None else ""),
+                        content=excerpt,
+                        language=artifact.language,
+                        path=artifact.path,
+                        basis="observed_fragment",
+                        source_ids=artifact.source_ids,
+                        annotations=[
+                            LineAnnotation(line=i, explanation=notes[i]) for i in sorted(patch_added_lines(excerpt))
+                        ],
+                        nodes=[],
+                        edges=[],
+                    )
+                )
         if artifact.kind != "code" or artifact.basis != "verified_file":
             continue
         if artifact.path not in files:
@@ -171,6 +217,7 @@ def derive_patches(response: Assistance, files: dict[str, str]) -> Assistance:
 
         artifact_index = response.artifacts.index(artifact)
         response.artifacts[artifact_index] = Artifact.model_validate(replacement)
+    response.artifacts.extend(fragment_diffs)
     return response
 
 

@@ -152,7 +152,7 @@ class Coordinator:
         if self.current:
             self.history.append(self.current)
             self.history = self.history[-12:]
-        self.context.integrate(response)
+        self.context.integrate(response, replace_open_questions=job.lane == "deep")
         if self.pinned:
             self.pending = response
             self.pending_version = (job.request_id, job.snapshot.session_id, job.snapshot.revision)

@@ -166,6 +166,8 @@ class Preferences(NSObject):
             if secret and settings.transcription in {"openai", "groq"}:
                 credentials.append((ModelChoice(provider=settings.transcription), "transcription", secret))
             settings.configured = True
+            if settings.quick.provider == settings.deep.provider == "disabled":
+                raise ValueError("Enable at least one response provider")
             settings = type(settings).model_validate(settings.model_dump())
             for choice, lane, secret in credentials:
                 self.controller.credentials.set(choice, lane, secret)

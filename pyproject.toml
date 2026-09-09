@@ -17,10 +17,10 @@ mac = [
   "pyobjc-framework-ScreenCaptureKit>=11,<13",
   "pyobjc-framework-CoreMedia>=11,<13",
   "pyobjc-framework-libdispatch>=11,<13",
-  "numpy>=2.2,<3", "sounddevice>=0.5,<1", "scipy>=1.15,<2",
+  "numpy>=2.2,<3", "sounddevice>=0.5,<1",
   "PyAutoGUI>=0.9.54,<1", "pytesseract>=0.3.13,<1",
-  "opencv-python-headless>=4.11,<5", "pynput>=1.8,<2",
 ]
+test = ["numpy>=2.2,<3"]
 local-asr = ["mlx-audio>=0.2; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [project.scripts]

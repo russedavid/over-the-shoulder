@@ -29,6 +29,7 @@ class Snapshot:
     previous_summary: str
     verified_files: str = "{}"
     previous_artifacts: str = "[]"
+    open_questions: tuple[str, ...] = ()
 
     def prompt_context(self) -> dict:
         return {
@@ -39,6 +40,7 @@ class Snapshot:
             "previous_task": self.previous_task,
             "previous_summary": self.previous_summary,
             "previous_artifacts": json.loads(self.previous_artifacts),
+            "unresolved_questions": list(self.open_questions),
         }
 
 
@@ -54,6 +56,7 @@ class ContextStore:
     previous_task: str = ""
     previous_summary: str = ""
     previous_artifacts: str = "[]"
+    open_questions: tuple[str, ...] = ()
     _screen_fingerprint: str = ""
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
@@ -117,9 +120,13 @@ class ContextStore:
             self.revision += 1
             return observation
 
-    def integrate(self, response: Assistance):
+    def integrate(self, response: Assistance, *, replace_open_questions=True):
         with self._lock:
             self.previous_task, self.previous_summary = response.task, response.summary
+            if replace_open_questions:
+                self.open_questions = tuple(response.open_questions[:20])
+            else:
+                self.open_questions = tuple(dict.fromkeys([*self.open_questions, *response.open_questions]))[-20:]
             artifacts = []
             for item in response.artifacts:
                 record = item.model_dump(exclude={"annotations"})
@@ -167,6 +174,7 @@ class ContextStore:
                 self.previous_summary,
                 json.dumps(self.verified_files, ensure_ascii=False),
                 self.previous_artifacts,
+                self.open_questions,
             )
 
     def clear(self):
@@ -177,5 +185,6 @@ class ContextStore:
             self.files.clear()
             self.previous_task = self.previous_summary = self._screen_fingerprint = ""
             self.previous_artifacts = "[]"
+            self.open_questions = ()
             if self.goal:
                 self.add("task", self.goal, "typed", "primary_user")

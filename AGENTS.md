@@ -1,6 +1,8 @@
 # Over The Shoulder Coder
 
-Read `docs/over-the-shoulder-coder-plan.md`, `docs/current-system-audit.md`, and `docs/assistance-contract.md` before the overhaul.
+Read `README.md`, `docs/implementation.md`, and `docs/assistance-contract.md` before changing the application. `docs/over-the-shoulder-coder-plan.md` retains the product intent; `docs/current-system-audit.md` is the historical baseline audit.
+
+Run focused checks with `.venv/bin/python -m unittest discover -s tests -v` and `uvx ruff check otsc tests scripts`. For native view changes, run `.venv/bin/python -m otsc --smoke-test /tmp/otsc-smoke` and inspect its report/rendered views. Synthetic demo and smoke-test paths make no API calls and do not capture the user's screen or audio. Do not present those checks as live model-quality or acoustic validation.
 
 Keep the existing Python/PyObjC/AppKit application. Refactor into modules within that application and improve its existing window. The owner explicitly rejected a SwiftUI rewrite and separate Python engine process. Prioritize the requested task behavior and concrete interaction improvements; do not turn module separation into a new service or IPC architecture.
 

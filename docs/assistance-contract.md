@@ -1,44 +1,32 @@
-# Assistance contract sketch
+# Assistance contract
 
-This is a proposed application contract, not an implemented API. The example is hand-authored product-design material, not a captured conversation or model evaluation result.
+The implemented contract lives in [`otsc/models.py`](../otsc/models.py). Pydantic validates model responses before they become artifacts. These are data structures within the Python/AppKit application, not a network service protocol.
 
-These are Python data objects and model-response structures used within the existing application. They do not imply a separate engine process or a frontend/backend IPC protocol.
+## One task and its conversation
 
-## State used by task logic and rendering
+An `Assistance` contains `task`, `summary`, `conversation`, `artifacts`, `observed_files`, and `open_questions`. A conversation response cites its observation and records an action: answer, acknowledge, challenge, clarify, or defer. Its `artifact_effect` explains how the contribution affects the proposal. A response can answer a technology question without creating an artifact.
 
-| Record | Essential fields | Rule |
-|---|---|---|
-| Task session | Session/task IDs, primary user's goal, working artifact, constraints, unresolved conversation acts | The person's task remains the organizing context |
-| Observation | Source kind, source ID, capture/utterance time, content reference/hash, confidence, optional speaker role | Channel and speaker identity are separate; retain uncertain attribution |
-| Context snapshot | Immutable revision, included observation IDs, task hypothesis, workspace snapshot ID | Both response lanes use the same snapshot |
-| Workspace snapshot | Verified files or partial observed ranges, completeness, conflicts, provenance, file hashes where known | Unknown ranges are not empty content; hypotheses are explicitly marked |
-| Assistance response | Request/context IDs, stage, task interpretation, conversation responses, artifacts, limitations | Validate before display; stale revisions cannot replace current work |
-| Artifact | Stable ID/revision, kind, scope, evidence links, payload, optional base snapshot | A patch, example, diagram, or answer states what it is and what it is based on |
+Observations record kind, channel, configured speaker role, time, confidence, and a stable ID. Both inference lanes receive the same snapshot of these observations, previous work, unresolved questions, observed fragments, and any selected project files.
 
-## Conversation responses
+## Code, diffs, and diagrams
 
-Each relevant question, suggestion, or objection can produce a response linked to its originating event. The response records an action such as answer, acknowledge, challenge, clarify, or defer, plus its effect on the current artifact.
+Each artifact has a stable ID, kind, title, canonical `content`, language, relative path, basis, source IDs, line annotations, and optional diagram nodes/edges. The basis is `example`, `observed_fragment`, `verified_file`, or `discussion`.
 
-An answer may have no artifact effect. A proposed design change is not automatically an accepted decision. If two people disagree, preserve the alternatives and explain the basis for the recommendation. The primary user can correct speaker attribution, pin the task, or dismiss a suggestion.
+- Code requires one annotation for every line, including structural lines. Clean copy preserves the canonical content and its original source comments exactly.
+- A model proposes a complete annotated replacement for a verified file. The host computes the unified diff from the immutable input snapshot, including correct handling of missing final newlines and deletion-only hunks. Patch annotations refer to added lines' new-file positions.
+- A replacement for an observed excerpt can have a companion diff. Its basis remains `observed_fragment`; known starting lines are preserved, and unknown positions are labeled as excerpt-relative. It does not become a full-file or verified repository diff.
+- Diagrams contain bounded nodes and edges referencing valid node IDs. The same data drives native drawing and SVG export. These are schematic drawings, not generated raster images or interactive diagram editors.
+- Explanations and checklists use text content. The app does not execute generated code or apply a proposal to the user's project.
 
-## Code and patch representation
+Every artifact cites observations from its request. Observed-file content must occur in its cited screen/file observations; spoken claims do not qualify. A verified-file proposal must target a file actually included in the selected snapshot.
 
-Keep `clean_code` or `patch_text` as the canonical content. Teaching annotations are separate objects addressed by artifact revision and line number/content hash. Every generated code line receives an explanation; formatting-only lines can be explicitly marked as structural. The UI shows annotations by default but copies canonical code through **Copy clean**.
+## Lifecycle
 
-An annotated explanation can be copied as Markdown. Language-aware commented exports can be added later; naïvely inserting comment markers can corrupt JSON, multiline strings, or indentation-sensitive code. Existing meaningful comments remain in canonical source.
+1. One request starts independent quick and deep workers from one immutable snapshot.
+2. Streaming APIs can expose a provisional summary. Only a validated complete response enters the artifact view.
+3. Deep output can replace quick output; late quick output cannot replace deep output.
+4. New automatic observations queue while that request finishes. Manual Help now uses the latest context and supersedes prior work. Session/request/revision checks reject stale responses.
+5. Pinning or selecting text holds replacements. Unpinning discards a pending result if its context has since become stale.
+6. Views retain their text state. Resize, view selection, annotation toggles, export, and copy reuse existing artifacts. Recent accepted artifacts remain available in History.
 
-A patch additionally records the target file and base hash. A partial screen observation can support a localized proposal or a complete example, but cannot justify claiming a full-file diff against unseen contents. Applying to a connected real folder verifies the base again.
-
-## Response lifecycle
-
-1. The scheduler allocates one request ID against a context revision and starts quick and deep work.
-2. Quick output is validated and displayed as provisional. Partial structured data is never treated as a complete patch.
-3. Deep output identifies which artifact revision it supersedes. The UI replaces or supplements only the matching artifact and keeps its history.
-4. If context changes, results are canceled or retained as historical proposals. A late result cannot overwrite newer or pinned work.
-5. Resize, scrolling, annotation toggles, and copy operations reuse the same artifact data without making another inference request.
-
-## Example
-
-[assistance-example.json](examples/assistance-example.json) illustrates one collaborative coding task. Another participant proposes returning zero for empty input. The assistant answers the question, explains the tradeoff, and supplies an example helper with four line annotations. The surrounding file is unobserved, so this is a code example rather than a verified repository patch.
-
-Other artifact payloads will use the same envelope: a diagram has editable nodes/edges and a rendered preview; an image has a locally managed media reference and provenance; an explanation has concise and expanded text. The renderer selects a layout for the current viewport and exposes additional detail through expansion/scrolling.
+[`otsc/demo.py`](../otsc/demo.py) supplies the current, explicitly synthetic code and design examples. The older [assistance-example.json](examples/assistance-example.json) is retained as the original product-design sketch; its envelope predates the implemented schema.

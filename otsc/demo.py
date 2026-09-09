@@ -118,7 +118,7 @@ class DemoProvider:
                 if screen
                 else []
             )
-        return Assistance(
+        response = Assistance(
             task=snapshot.goal,
             summary=summary,
             conversation=[
@@ -133,3 +133,6 @@ class DemoProvider:
             observed_files=observed,
             open_questions=["Confirm the caller's handling of missing data."] if not design else [],
         )
+        from otsc.workspace import derive_patches
+
+        return derive_patches(response, {})

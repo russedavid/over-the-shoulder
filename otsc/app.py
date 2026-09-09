@@ -1,6 +1,7 @@
 """A single native AppKit application, with retained views and background workers."""
 
 import json
+import math
 import queue
 import threading
 import time
@@ -14,7 +15,7 @@ from PyObjCTools import AppHelper
 from otsc.capture import AudioCapture, ScreenCapture
 from otsc.context import ContextStore
 from otsc.demo import DemoProvider, seed_demo
-from otsc.diagram import diagram_layout, diagram_svg
+from otsc.diagram import diagram_layout, diagram_svg, edge_geometry
 from otsc.native import FlippedView, button, color, field, frame, label, popup, retain_text, scroll_text
 from otsc.preferences import Preferences
 from otsc.privacy import private_directory, private_write, redact
@@ -40,22 +41,21 @@ class DiagramView(FlippedView):
             A.NSParagraphStyleAttributeName: paragraph,
         }
         for edge in artifact.edges:
-            a, b = boxes[edge.source], boxes[edge.target]
-            start = (a[0] + a[2] / 2, a[1] + a[3])
-            end = (b[0] + b[2] / 2, b[1])
+            start, c1, c2, end, label_position = edge_geometry(edge, boxes)
             color("987454").setStroke()
             path = A.NSBezierPath.bezierPath()
             path.setLineWidth_(1.6)
             path.moveToPoint_(start)
-            path.curveToPoint_controlPoint1_controlPoint2_(end, (start[0], start[1] + 40), (end[0], end[1] - 40))
+            path.curveToPoint_controlPoint1_controlPoint2_(end, c1, c2)
             path.stroke()
             arrow = A.NSBezierPath.bezierPath()
-            arrow.moveToPoint_((end[0] - 4, end[1] - 7))
+            angle = math.atan2(end[1] - c2[1], end[0] - c2[0])
+            arrow.moveToPoint_((end[0] - 8 * math.cos(angle - 0.5), end[1] - 8 * math.sin(angle - 0.5)))
             arrow.lineToPoint_(end)
-            arrow.lineToPoint_((end[0] + 4, end[1] - 7))
+            arrow.lineToPoint_((end[0] - 8 * math.cos(angle + 0.5), end[1] - 8 * math.sin(angle + 0.5)))
             arrow.stroke()
             A.NSString.stringWithString_(edge.label).drawInRect_withAttributes_(
-                NSMakeRect((start[0] + end[0]) / 2 - 50, (start[1] + end[1]) / 2, 100, 34),
+                NSMakeRect(label_position[0] - 55, label_position[1], 110, 34),
                 {**attrs, A.NSFontAttributeName: A.NSFont.systemFontOfSize_(11)},
             )
         for node in artifact.nodes:
@@ -152,7 +152,7 @@ class Controller(NSObject):
         self.window.setContentView_(self.root)
         self.title = label(self.root, "Over The Shoulder Coder", size=22, bold=True)
         self.subtitle = label(
-            self.root, "Your task. The surrounding conversation. Something useful to work with.", size=12
+            self.root, "Code, design, and explanations informed by your screen and conversation.", size=12
         )
         self.controls = {}
         for name, title, action in [
@@ -394,7 +394,7 @@ class Controller(NSObject):
         self.status.setStringValue_("Reading the current work…")
 
         def worker():
-            result = {"type": "capture_done", "generation": generation, "root": root}
+            result = {"type": "capture_done", "generation": generation, "root": root, "at": time.time()}
             try:
                 if settings.capture_screen:
                     result["screen"] = self.screen.capture(
@@ -543,7 +543,7 @@ class Controller(NSObject):
         else:
             if "screen" in event:
                 text, path = event["screen"]
-                self.context.add("screen", text, "screen", image_path=path, confidence="uncertain")
+                self.context.add("screen", text, "screen", image_path=path, confidence="uncertain", at=event.get("at"))
             if "files" in event:
                 self.context.set_verified_files(event["root"], event["files"])
 
@@ -587,21 +587,56 @@ class Controller(NSObject):
                 f"{o.id} · {o.channel} · {o.speaker} · {o.confidence}\n{o.text}" for o in self.context.observations
             )
         elif view == "Observed files":
-            text = "OBSERVED FRAGMENTS — incomplete and unverified\n\n" + self.context.workspace_text()
-            text += "\n\nVERIFIED PROJECT SNAPSHOT\n" + "\n".join(
+            excerpts = []
+            for path, fragments in self.context.files.items():
+                for index, fragment in enumerate(fragments, 1):
+                    location = (
+                        f"starts at line {fragment.first_line}" if fragment.first_line else "line position unknown"
+                    )
+                    excerpts.append(f"{path} · excerpt {index} · {location}\n{fragment.content}")
+            text = "Observed on screen — partial files\n\n" + (
+                "\n\n".join(excerpts) or "No file excerpts identified yet."
+            )
+            text += "\n\nFiles read from the selected project\n" + "\n".join(
                 f"{p} ({len(c.splitlines())} lines)" for p, c in self.context.verified_files.items()
             )
             if self.context.repo_root:
                 text += "\n\nSelected folder: " + self.context.repo_root
         elif view == "History":
-            text = (
-                "\n\n".join(r.task + "\n" + r.summary for r in reversed(self.coordinator.history))
-                or "Previous accepted responses will appear here."
-            )
+            records = []
+            for old in reversed(self.coordinator.history):
+                records.append(
+                    old.task
+                    + "\n"
+                    + old.summary
+                    + "\n\n"
+                    + "\n\n".join(
+                        a.title
+                        + " · "
+                        + a.basis
+                        + "\n"
+                        + (a.annotated_text() if self.annotation.state() else a.clean_text())
+                        for a in old.artifacts
+                    )
+                )
+            text = "\n\n——————\n\n".join(records) or "Previous accepted responses will appear here."
         elif response and (view == "Conversation" or not artifact):
-            text = "\n\n".join(
-                f"{c.action.capitalize()} · {c.source_id}\n{c.text}\n{c.artifact_effect}" for c in response.conversation
-            )
+            sources = {o.id: o for o in self.context.observations}
+            replies = []
+            for reply in response.conversation:
+                source = sources.get(reply.source_id)
+                quote = source.text if source else "Earlier conversation"
+                who = (
+                    {"primary_user": "You", "other_people": "Other person", "uncertain": "Uncertain speaker"}.get(
+                        source.speaker, "Context"
+                    )
+                    if source
+                    else "Context"
+                )
+                replies.append(
+                    f"{who}: {quote}\n\n{reply.action.capitalize()}\n{reply.text}\n\n{reply.artifact_effect}"
+                )
+            text = "\n\n——————\n\n".join(replies)
             if response.open_questions:
                 text += "\n\nStill open\n" + "\n".join(response.open_questions)
             text = text or response.summary
@@ -644,6 +679,8 @@ class Controller(NSObject):
 
     @objc.python_method
     def copy_text(self, explained=False):
+        if str(self.view.titleOfSelectedItem()) != "Artifact":
+            return str(self.body.string())
         artifact = self.current_artifact()
         if artifact:
             return artifact.annotated_text() if explained else artifact.clean_text()
@@ -783,6 +820,36 @@ class Controller(NSObject):
                 assert self.copy_text() == before
                 self.save_view_image(directory / "code.png")
                 self.body.setSelectedRange_((0, 0))
+                request_id = self.coordinator.request_id
+                self.view.selectItemWithTitle_("Conversation")
+                self.refresh_body()
+                assert "Zero would blur" in self.copy_text()
+                self.view.selectItemWithTitle_("Artifact")
+                self.selected_id = response.artifacts[1].id
+                self.refresh_body()
+                assert "@@" in self.copy_text()
+                assert self.coordinator.request_id == request_id
+                # Synthetic incoming audio cannot starve an in-flight deep response.
+                from types import SimpleNamespace
+
+                self.audio = SimpleNamespace(id="synthetic-audio")
+                revision = self.context.revision
+                self.coordinator.active_lanes = {"deep"}
+                self.handle_event(
+                    {
+                        "type": "speech",
+                        "capture_id": "synthetic-audio",
+                        "channel": "system",
+                        "speaker": "other_people",
+                        "text": "What about a generator input?",
+                        "at": 12345.0,
+                    }
+                )
+                assert self.context.revision == revision and len(self.buffered_context) == 1
+                self.coordinator.active_lanes.clear()
+                self.flush_context()
+                assert self.context.observations[-1].at == 12345.0
+                self.audio = None
                 self.smoke_step = 1
                 self.load_demo(True)
             elif self.smoke_step == 1 and response.artifacts[0].kind == "diagram":
@@ -803,6 +870,8 @@ class Controller(NSObject):
                                 "click-through retains artifact",
                                 "native diagram",
                                 "settings construction",
+                                "collaborator response and observed diff",
+                                "new audio queued without starving deep work",
                             ],
                             "live_capture": False,
                             "live_api_calls": False,
@@ -818,7 +887,10 @@ class Controller(NSObject):
             import traceback
 
             traceback.print_exc()
-            self.quit_(None)
+            self.shutdown()
+            import os
+
+            os._exit(1)
 
 
 def run(options):

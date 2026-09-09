@@ -177,6 +177,8 @@ class Assistance(Record):
             if any(o.kind not in {"screen", "file"} for o in sources):
                 raise ValueError("A spoken description is not an observed source file")
             visible = " ".join(" ".join(o.text.split()) for o in sources)
+            if item.path not in visible:
+                raise ValueError("An observed file path must be visible in its cited observations")
             if " ".join(item.content.split()) not in visible:
                 raise ValueError("Observed file content includes text absent from its cited observations")
         for artifact in self.artifacts:

@@ -51,7 +51,7 @@ class ScreenCapture:
                 right = max(data["left"][i] + data["width"][i] for i in indices)
                 bottom = max(data["top"][i] + data["height"][i] for i in indices)
                 draw.rectangle((left - 3, top - 3, right + 3, bottom + 3), fill="black")
-        pixels = list(image.convert("L").resize((16, 16)).getdata())
+        pixels = list(image.convert("L").resize((16, 16)).tobytes())
         average = sum(pixels) / len(pixels)
         signature = "".join("1" if value > average else "0" for value in pixels)
         if not self.signature or sum(a != b for a, b in zip(signature, self.signature)) > 14:

@@ -1,4 +1,6 @@
-# Current implementation audit
+# Pre-overhaul implementation audit
+
+This document describes the preserved baseline, before the unified application replaced it. See [implementation.md](implementation.md) for the current code and verification boundaries. Source references below refer to commit `c6f644a`.
 
 Inspected September 8, 2026. Source baseline: `c6f644a`. Host: macOS 15.6.1. Installed Codex CLI: 0.153.2. This is a source inspection and syntax check; the application, capture streams, and model calls were not started.
 

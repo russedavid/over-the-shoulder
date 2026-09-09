@@ -1,6 +1,6 @@
 # Over The Shoulder Coder: product and refactoring plan
 
-September 8, 2026. Planning proposal grounded in the current source and the owner's product requirements. The source baseline is committed; this document does not claim the overhaul is implemented.
+September 8, 2026. Product plan grounded in the original source and the owner's requirements. The first working overhaul is now implemented in the existing Python/PyObjC/AppKit stack; [implementation.md](implementation.md) records the delivered behavior, verification, and remaining live acceptance work. The sections below retain the broader product intent.
 
 ## Product center
 

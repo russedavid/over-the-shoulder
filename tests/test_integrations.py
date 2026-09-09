@@ -139,6 +139,39 @@ class ProviderTests(unittest.TestCase):
 
 
 class WorkspaceTests(unittest.TestCase):
+    def test_observed_excerpt_diff_keeps_its_partial_basis_and_line_positions(self):
+        from otsc.demo import DemoProvider, seed_demo
+
+        c = ContextStore()
+        seed_demo(c)
+        # Replay only; an existing observed first-line offset must be preserved in the host diff.
+        r = DemoProvider().generate(c.snapshot(), "quick", Cancellation(), lambda text: None)
+        r.observed_files[0].first_line = 20
+        r.artifacts = [
+            Artifact(
+                id="edit",
+                kind="code",
+                title="Edit",
+                content="def mean(values):\n    return None\n",
+                language="python",
+                path="stats.py",
+                basis="observed_fragment",
+                source_ids=[o.id for o in c.observations],
+                annotations=[
+                    LineAnnotation(line=1, explanation="Function"),
+                    LineAnnotation(line=2, explanation="Missing data"),
+                ],
+                nodes=[],
+                edges=[],
+            )
+        ]
+        result = derive_patches(r, {})
+        self.assertEqual(result.artifacts[0].kind, "code")
+        diff = result.artifacts[1]
+        self.assertEqual(diff.basis, "observed_fragment")
+        self.assertIn("@@ -20,2 +20,2 @@", diff.content)
+        self.assertEqual(diff.annotations[0].line, 21)
+
     def test_project_read_excludes_keys_ignored_files_binary_content_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temp, tempfile.TemporaryDirectory() as outside:
             root = Path(temp)
