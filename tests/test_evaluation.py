@@ -1,12 +1,15 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from evals.anchors import anchors
 from evals.cases import make_snapshot
 from evals.checks import UnsupportedCode, run_function, task_checks
 from evals.report import write_report
-from evals.runner import outcome, validate_corpus
+from evals.runner import outcome, run_case, validate_corpus
+from otsc.settings import ModelChoice
 
 
 class EvaluationTests(unittest.TestCase):
@@ -39,6 +42,21 @@ class EvaluationTests(unittest.TestCase):
         checks = task_checks(item["case"], item["response"], make_snapshot(item["case"]))
         self.assertFalse(outcome(checks, {"passed": True}))
         self.assertIsNone(outcome([{"passed": True}], None))
+        self.assertIsNone(outcome([{"passed": None}], {"passed": True}))
+
+    def test_judge_failure_is_not_mislabeled_as_product_failure(self):
+        anchor = next(a for a in anchors() if a["id"] == "missing-01-positive")
+        choice = ModelChoice(provider="codex", model="test-only")
+        provider = SimpleNamespace(generate=lambda *args: anchor["response"])
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("evals.runner.provider_for", return_value=provider),
+            patch("evals.runner.review", side_effect=ValueError("Injected evaluator outage")),
+        ):
+            record = run_case(anchor["case"], choice, choice, False, Path(directory))
+        self.assertIsNone(record["task_passed"])
+        self.assertEqual(record["error"]["phase"], "semantic_review")
+        self.assertTrue(all(c["passed"] for c in record["checks"]))
 
     def test_report_escapes_adversarial_text(self):
         run = {

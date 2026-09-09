@@ -13,7 +13,6 @@ from evals.judge import SYSTEM as JUDGE_SYSTEM
 from evals.judge import review
 from evals.report import write_report
 from otsc.inspection import InspectionProvider
-from otsc.models import Assistance
 from otsc.privacy import app_directory, atomic_private_write
 from otsc.providers import provider_for
 from otsc.scheduler import Cancellation
@@ -38,6 +37,10 @@ def validate_corpus():
 def outcome(checks, verdict):
     if any(c["passed"] is False for c in checks):
         return False
+    if verdict and verdict["passed"] is False:
+        return False
+    if any(c["passed"] is None for c in checks):
+        return None
     if verdict and verdict["passed"] is not None:
         return verdict["passed"]
     return None
@@ -63,12 +66,15 @@ def run_case(item, choice, judge_choice, inspection, directory, reference_eligib
         "task_passed": None,
         "error": None,
     }
+    phase = "generation"
     try:
         response = provider.generate(snapshot, "deep", Cancellation(), progress)
         record["generation_seconds"] = round(time.monotonic() - started, 3)
         record["response"] = response.model_dump()
+        phase = "deterministic_checks"
         record["checks"] = task_checks(item, response, snapshot)
         if judge_choice and not any(c["passed"] is False for c in record["checks"]):
+            phase = "semantic_review"
             judge = provider_for(judge_choice, Credentials())
             judged_at = time.monotonic()
             judge_progress = Progress(
@@ -91,9 +97,10 @@ def run_case(item, choice, judge_choice, inspection, directory, reference_eligib
             record["review_seconds"] = round(time.monotonic() - judged_at, 3)
         record["task_passed"] = outcome(record["checks"], record["review"] if reference_eligible else None)
     except Exception as error:
-        record["task_passed"] = False
-        record["error"] = {"type": type(error).__name__, "message": str(error)[:2500]}
-        record["raw_response"] = getattr(base, "last_raw_response", None) or getattr(base, "last_raw_text", "")
+        record["task_passed"] = False if phase == "generation" else outcome(record["checks"], None)
+        record["error"] = {"phase": phase, "type": type(error).__name__, "message": str(error)[:2500]}
+        if phase == "generation":
+            record["raw_response"] = getattr(base, "last_raw_response", None) or getattr(base, "last_raw_text", "")
     record["inspection_trace"] = getattr(provider, "last_trace", [])
     record["elapsed_seconds"] = round(time.monotonic() - started, 3)
     atomic_private_write(directory / (item["id"] + ".json"), json.dumps(record, indent=2, ensure_ascii=False))
@@ -148,6 +155,26 @@ def calibrate(choice, directory):
     return result
 
 
+def validate_reference(choice, reference_check):
+    if reference_check.get("model") != choice.model_dump() or reference_check.get("rubric_hash") != digest(
+        JUDGE_SYSTEM
+    ):
+        raise ValueError("The reference check does not match this judge configuration")
+    expected = digest(
+        [
+            {
+                "id": a["id"],
+                "expected": a["expected"],
+                "criteria": a["case"]["criteria"],
+                "response": a["response"].model_dump(),
+            }
+            for a in anchors()
+        ]
+    )
+    if reference_check.get("anchor_hash") != expected:
+        raise ValueError("The reference check does not match the current anchor set")
+
+
 def run_live(
     *,
     split="development",
@@ -192,25 +219,11 @@ def run_live(
         "summary": {},
     }
     directory.mkdir(parents=True, exist_ok=True)
+    if (directory / "manifest.json").exists() or (directory / "run.json").exists():
+        raise ValueError("This output directory already contains a run; use a new directory to preserve it")
     if judge_choice:
-        if reference_check and (
-            reference_check.get("model") != judge_choice.model_dump()
-            or reference_check.get("rubric_hash") != digest(JUDGE_SYSTEM)
-        ):
-            raise ValueError("The reference check does not match this judge configuration")
-        expected_anchor_hash = digest(
-            [
-                {
-                    "id": a["id"],
-                    "expected": a["expected"],
-                    "criteria": a["case"]["criteria"],
-                    "response": a["response"].model_dump(),
-                }
-                for a in anchors()
-            ]
-        )
-        if reference_check and reference_check.get("anchor_hash") != expected_anchor_hash:
-            raise ValueError("The reference check does not match the current anchor set")
+        if reference_check:
+            validate_reference(judge_choice, reference_check)
         reference_check = reference_check or calibrate(judge_choice, directory)
         manifest["judge_reference_check"] = {k: v for k, v in reference_check.items() if k != "examples"}
     eligible = reference_check.get("eligible", False) if judge_choice else False
@@ -241,28 +254,3 @@ def run_live(
     report = write_report(run, directory)
     print(json.dumps({"report": str(report), **run["summary"]}), flush=True)
     return run, report
-
-
-def review_saved(directory, *, judge_model="gpt-6-astra"):
-    directory = Path(directory)
-    run = json.loads((directory / "run.json").read_text())
-    cases = {c["id"]: c for c in CASES}
-    choice = ModelChoice(provider="codex", model=judge_model, reasoning="low")
-    for record in run["results"]:
-        if not record.get("response") or any(c["passed"] is False for c in record["checks"]):
-            continue
-        item = cases[record["case_id"]]
-        verdict = review(
-            provider_for(choice, Credentials()),
-            item,
-            make_snapshot(item),
-            Assistance.model_validate(record["response"]),
-        )
-        record["review"] = {**verdict, "method": "llm_provisional", "model": judge_model, "human_calibrated": False}
-        record["task_passed"] = outcome(record["checks"], verdict)
-    run["summary"].update(
-        passed=sum(r["task_passed"] is True for r in run["results"]),
-        failed=sum(r["task_passed"] is False for r in run["results"]),
-        needs_review=sum(r["task_passed"] is None for r in run["results"]),
-    )
-    return write_report(run, directory)

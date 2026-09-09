@@ -7,7 +7,7 @@ development set. These cases do not establish human calibration or field adoptio
 from otsc.context import ContextStore
 from otsc.telemetry import digest
 
-VERSION = "2026-09-08.2"
+VERSION = "2026-09-08.3"
 ORIGIN = "assistant-authored synthetic fixture"
 
 
@@ -207,7 +207,7 @@ CASES = [
         "unknown-file",
         "Suggest a guard for this visible fragment without inventing its filename or surrounding module.",
         [screen("value = record['amount']\nresult = value / count")],
-        "Treat the snippet as partial. Explain missing-count or missing-value handling without asserting a filename, unseen function, or complete repository patch.",
+        "Treat the snippet as partial. Suggest a local guard for a visible failure path, or explain what policy is needed, without asserting a filename, unseen enclosing function, or complete repository patch. A zero-divisor guard is sufficient; handling every possible missing-value case was not requested.",
         no_observed=True,
     ),
     case(
@@ -315,7 +315,7 @@ CASES = [
             ),
             other("Does this already solve the missing-data problem?"),
         ],
-        "Recognize that the visible implementation already handles the stated distinction. Explain it without inventing a new defect or rewriting unrelated code.",
+        "Recognize and correctly explain the existing empty-input versus numeric-zero distinction without rewriting code or claiming that the shown empty-input path fails. A clearly conditional caveat about missing entries inside a nonempty collection is allowed; it is not a claim that the current task requires handling them.",
         no_code=True,
     ),
     case(

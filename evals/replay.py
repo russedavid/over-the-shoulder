@@ -10,7 +10,7 @@ from evals.cases import CASES, corpus_manifest, make_snapshot
 from evals.checks import task_checks
 from evals.judge import review
 from evals.report import write_report
-from evals.runner import outcome
+from evals.runner import outcome, validate_reference
 from otsc.models import Assistance, normalize_optional_file_metadata, parse_response
 from otsc.providers import provider_for
 from otsc.settings import Credentials, ModelChoice
@@ -19,11 +19,14 @@ from otsc.workspace import derive_patches
 
 
 def replay_run(source, output, reference_check):
+    if Path(source).resolve() == Path(output).resolve() or (Path(output) / "run.json").exists():
+        raise ValueError("Replay requires a new output directory; original judgments must be preserved")
     original = json.loads((Path(source) / "run.json").read_text())
     cases = {c["id"]: c for c in CASES}
     if any(r["split"] != "development" for r in original["results"]):
         raise ValueError("Rubric/metadata repair is restricted to development runs; do not tune on holdout results")
     choice = ModelChoice.model_validate(reference_check["model"])
+    validate_reference(choice, reference_check)
     run = {
         "run_id": "replay-" + uuid4().hex[:10],
         "mode": "recorded-output replay",
@@ -45,8 +48,10 @@ def replay_run(source, output, reference_check):
         result = copy.deepcopy(old)
         result["original_task_passed"] = old["task_passed"]
         result["original_error"] = old.get("error")
+        result["original_review"] = old.get("review")
         result["error"] = None
         result["criteria"] = item["criteria"]
+        phase = "processing"
         try:
             if old.get("raw_response"):
                 raw = old["raw_response"]
@@ -62,6 +67,7 @@ def replay_run(source, output, reference_check):
             if same and old.get("review"):
                 result["review"] = {**old["review"], "reused_for_identical_response_and_criterion": True}
             elif not any(c["passed"] is False for c in result["checks"]):
+                phase = "semantic_review"
                 result["review"] = {
                     **review(provider_for(choice, Credentials()), item, snapshot, response),
                     "method": "llm_provisional",
@@ -72,8 +78,9 @@ def replay_run(source, output, reference_check):
                 result["checks"], result.get("review") if reference_check["eligible"] else None
             )
         except Exception as error:
-            result["task_passed"] = False
-            result["error"] = {"type": type(error).__name__, "message": str(error)}
+            result["task_passed"] = False if phase == "processing" else outcome(result["checks"], None)
+            result["review"] = None
+            result["error"] = {"phase": phase, "type": type(error).__name__, "message": str(error)}
         result["replay_seconds"] = round(time.monotonic() - started, 3)
         run["results"].append(result)
         print(

@@ -11,7 +11,11 @@ def main():
     parser.add_argument("--smoke-test", metavar="OUTPUT_DIR", help="Exercise native views with synthetic data and exit")
     commands = parser.add_subparsers(dest="command")
     evaluate = commands.add_parser("eval", help="Run task-specific evaluations; live inference is explicit")
-    evaluate.add_argument("--live", action="store_true")
+    evaluation_mode = evaluate.add_mutually_exclusive_group()
+    evaluation_mode.add_argument("--live", action="store_true")
+    evaluation_mode.add_argument(
+        "--replay", metavar="RUN_DIRECTORY", help="Recheck recorded development outputs; preserve the original run"
+    )
     evaluate.add_argument("--split", choices=["development", "holdout", "all"], default="development")
     evaluate.add_argument("--limit", type=int)
     evaluate.add_argument("--cases", help="Comma-separated case IDs within the selected split")
@@ -33,7 +37,15 @@ def main():
 
         from evals.runner import run_live, validate_corpus
 
-        if args.live:
+        if args.replay:
+            if not args.reference_check or not args.output:
+                parser.error("--replay requires --reference-check and a new --output directory")
+            from evals.replay import replay_run
+
+            reference = json.loads(Path(args.reference_check).read_text())
+            run, path = replay_run(args.replay, args.output, reference)
+            print(json.dumps({"report": str(path), **run["summary"]}))
+        elif args.live:
             if args.limit is not None and args.limit <= 0:
                 parser.error("--limit must be positive")
             reference = json.loads(Path(args.reference_check).read_text()) if args.reference_check else None

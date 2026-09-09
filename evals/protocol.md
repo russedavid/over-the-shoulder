@@ -1,4 +1,4 @@
-# Evaluation protocol, version 2026-09-08.2
+# Evaluation protocol, version 2026-09-08.3
 
 The purpose is to determine whether the assistant completes the user's stated task while respecting evidence, conversation, and authority. There is no generic 1–5 quality score.
 
@@ -17,7 +17,11 @@ The corpus hash, selected IDs, application/code hash, prompt/schema hashes, mode
 3. Use a case-specific binary model judgment for semantic requirements such as handling a participant's suggestion or distinguishing uncertainty from observed facts. Preserve the critique and response evidence.
 4. A failed deterministic check cannot be overridden by the judge. Missing or ineligible semantic review remains `needs review`.
 
-The semantic reviewer is checked against 14 hand-authored positive/negative examples from development families. Its eligibility rule is predefined: zero false-positive passes, all but at most one positive example recognized, and agreement on all but at most one reference. Version 2 added a correct empty-sum example after version 1's rubric wrongly demanded a comparison with the mean contract that the user had never requested. A successful check establishes only a narrow reference sanity check. It is **not human calibration**, and no inter-rater agreement or human-level reliability is claimed.
+The semantic reviewer is checked against 16 assistant-authored positive/negative examples from development families. Its eligibility rule is predefined: zero false-positive passes, all but at most one positive example recognized, and agreement on all but at most one reference. A successful check establishes only a narrow reference sanity check. It is **not human calibration**, and no inter-rater agreement or human-level reliability is claimed.
+
+The original development runs are retained. Version 2 corrected a rubric that demanded an unrequested comparison between sum and mean. Version 3 accepts a local zero-divisor guard when the task asks for a guard without prescribing missing-value behavior, and distinguishes a conditional caveat from a false claim that working code is broken. Added reference examples exercise these distinctions. These are evaluator corrections, not improvements in the recorded generations. Replays use a new directory, retain previous critiques/outcomes, reject holdout inputs, and validate the judge/reference identity.
+
+An evaluator outage is `needs review`, not a product failure. A genuinely unsupported deterministic check also remains `needs review` even when a model reviewer approves the response. A concrete deterministic or semantic violation is a failure.
 
 All judgments remain provisional until qualified human review is available. The owner previously authorized assistant review; that authorization does not transform assistant-authored labels into human labels.
 

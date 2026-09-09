@@ -19,7 +19,7 @@ button{background:#fffdf9;border:1px solid #ad957a;border-radius:6px;color:var(-
 <h1>Keep the task, conversation, and code in view.</h1>
 <p class="lede">A desktop assistant that follows screen and speech, remembers the task's constraints, and produces code or design proposals tied to the evidence it actually received.</p>
 <p>Short help arrives first. Deeper work follows. The person doing the work stays in control of what to use, change, or reject.</p>
-<h2>One small example</h2>
+<h2>From conversation to a useful change</h2>
 <p class="notice">Interactive illustration using a self-authored fixture. These steps do not record your screen, use your microphone, or call a model.</p>
 <div class="controls" role="group" aria-label="Replay steps">
 <button data-step="0" aria-pressed="true">1. Observe</button><button data-step="1" aria-pressed="false">2. Hear the question</button><button data-step="2" aria-pressed="false">3. Review the proposal</button>
@@ -35,7 +35,7 @@ button{background:#fffdf9;border:1px solid #ad957a;border-radius:6px;color:var(-
 <p>The repository contains the native application, source-only setup, behavior checks, session recovery, operational metadata, and task-specific evaluations. The evaluation reports retain inputs, outputs, concrete critiques, and uncertainty.</p>
 <p><a href="case-study.md">Technical case study</a> · <a href="../operating-guide.md">Operating guide</a> · <a href="../threat-model.md">Boundaries and limitations</a> · <a href="../../evals/protocol.md">Evaluation protocol</a></p>
 <pre>python ots.py</pre>
-<footer>The desktop application sends selected context to the configured model provider. Local speech recognition and optional local task memory are available. This illustration is not evidence of field adoption, a production accuracy rate, or research novelty.</footer>
+<footer>Built with Python, PyObjC, and AppKit. The illustration is self-authored; the case study explains the measured checks and their limits.</footer>
 </main>
 <script>
 const lines=[['def mean(values):','Define the helper over the supplied measurements.'],['    if not values:','Detect empty input before dividing by its length.'],['        return None','Represent missing data without inventing a numeric measurement.'],['    return sum(values) / len(values)','Compute the mean for a nonempty collection, including a real mean of zero.']];

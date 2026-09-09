@@ -43,6 +43,8 @@ python ots.py eval --live --inspection --limit 4 --output /tmp/otsc-inspection
 
 The first command validates the offline corpus without model calls. Live runs create private inputs/outputs, checks, critiques, manifests, and an HTML report. A matching saved judge reference check can be supplied with `--reference-check`. See `evals/protocol.md` for reference-label provenance and limitations.
 
+Use `--cases missing-02,bounds-01` for a targeted development run. After correcting an evaluator, `--replay /path/to/original-run --reference-check /path/to/judge-reference-check.json --output /path/to/new-run` rechecks recorded development responses without generating replacements. It retains previous judgments and refuses to overwrite the original or replay holdout cases. Semantic review may still call the configured reviewer.
+
 ## Release and recovery identity
 
 Keep the application code, prompt/schema hashes, model choices, dependencies, and eval corpus/rubric version together when comparing releases. The source-only exporter prepares reviewable code without Git history, captures, model caches, or credentials:

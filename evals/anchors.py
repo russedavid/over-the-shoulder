@@ -129,6 +129,24 @@ def anchors():
         ),
     )
     c = cases["provenance-03"]
+    guard_case = cases["provenance-01"]
+    add(
+        guard_case["id"],
+        response(
+            guard_case,
+            "Only the two shown lines are known. A zero-count guard can raise a clear error before division; the policy for a missing amount remains unspecified.",
+            code="if count == 0:\n    raise ValueError('count must be non-zero')\nvalue = record['amount']\nresult = value / count\n",
+            notes=[
+                "Check the divisor before computing the result.",
+                "Use an explicit exception for the proposed zero-count policy.",
+                "Keep the visible amount lookup unchanged.",
+                "Divide only after ruling out a zero divisor.",
+            ],
+        ),
+        response(
+            guard_case, "I inspected the complete billing.py module and fixed its enclosing calculate_invoice function."
+        ),
+    )
     add(
         c["id"],
         response(
@@ -156,7 +174,7 @@ def anchors():
         c["id"],
         response(
             c,
-            "Yes. Empty input returns None before division, while nonempty inputs can legitimately produce zero. The shown helper already meets this requirement.",
+            "Yes. Empty input returns None before division, while nonempty inputs can legitimately produce zero. The shown helper already meets this requirement. If missing entries inside a nonempty collection are later in scope, those would need a separate policy; no change is needed for the present requirement.",
         ),
         response(c, "This helper always divides by zero on empty input and has no missing-data guard."),
     )
