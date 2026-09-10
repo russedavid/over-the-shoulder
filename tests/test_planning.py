@@ -40,7 +40,8 @@ class TaskPlanningTests(unittest.TestCase):
         self.source = self.context.snapshot().observations[0].id
 
     def run_answer(self, specification, outputs, *, reuse=False, reason="The deliverable is unchanged."):
-        decision = FakeProvider(dict(reuse_previous=reuse, reason=reason, plan=None if reuse else specification))
+        decision = FakeProvider(dict(answer_needed=True, answer_reason="The request needs an answer.",
+                                     reuse_previous=reuse, reason=reason, plan=None if reuse else specification))
         answer = FakeProvider(dict(task="Help with this task", summary="A concrete proposal", conversation=[],
                                    outputs=outputs, output_sources={key: [self.source] for key in outputs},
                                    observed_files=[], open_questions=[]))

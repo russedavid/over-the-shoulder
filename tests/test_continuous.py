@@ -32,10 +32,12 @@ def delta(**kwargs):
     return ContextUpdate(**{"upsert": [], "remove": [], "observed_files": [], "retire_files": [], **kwargs})
 
 
-def next_result(coordinator):
+def next_result(coordinator, *, include_cancelled=False):
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         event = coordinator.events.get(timeout=2)
+        if include_cancelled and event["type"] == "cancelled":
+            return event
         if event["type"] == "result":
             return event
     raise AssertionError("No answer arrived")
@@ -265,7 +267,11 @@ class PerceptionTests(unittest.TestCase):
             context.add("speech", "New evidence", "system", "other_people")
             self.assertTrue(coordinator.accept(event))
             context.set_goal("Different task")
-            self.assertFalse(coordinator.accept(next_result(coordinator)))
+            # An obsolete request may now be stopped before its provider runs,
+            # or finish before the task edit and then be rejected on delivery.
+            stale = next_result(coordinator, include_cancelled=True)
+            self.assertIn(stale["type"], {"result", "cancelled"})
+            self.assertFalse(coordinator.accept(stale))
             coordinator.request(manual=True)
             next_event = next_result(coordinator)
             coordinator.request(manual=True)

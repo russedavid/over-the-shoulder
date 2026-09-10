@@ -204,6 +204,12 @@ class ContextRemoval(Record):
     source_ids: list[str] = Field(min_length=1, max_length=8)
 
 
+class NoAnswerUpdate(Record):
+    """A host-side decision to retain the last answer; never a new artifact."""
+
+    reason: str = Field(min_length=1, max_length=3000)
+
+
 class Assistance(Record):
     task: str
     summary: str
@@ -214,6 +220,7 @@ class Assistance(Record):
     # Host diagnostics are not a model-output field and do not confer evidence authority.
     _delivery_notes: list[dict] = PrivateAttr(default_factory=list)
     _task_plan: dict | None = PrivateAttr(default=None)
+    _refresh_reason: str = PrivateAttr(default="")
 
     def validate_sources(self, observations: list[Observation], verified_files: dict[str, str] | None = None):
         ids = {o.id for o in observations}

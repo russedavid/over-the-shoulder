@@ -7,7 +7,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from pydantic import Field, model_validator
 
 from otsc.delivery import prepare_response
-from otsc.models import LineAnnotation, Record, response_schema
+from otsc.models import LineAnnotation, NoAnswerUpdate, Record, response_schema
 from otsc.telemetry import Progress, digest, record_progress
 from otsc.workspace import verified_from_snapshot
 
@@ -41,6 +41,8 @@ class TaskPlan(Record):
 
 
 class PlanDecision(Record):
+    answer_needed: bool
+    answer_reason: str = Field(min_length=1, max_length=3000)
     reuse_previous: bool
     reason: str = Field(min_length=1, max_length=3000)
     plan: TaskPlan | None
@@ -61,6 +63,9 @@ class ImageOutput(Record):
 
 
 PLANNING_SYSTEM = """Plan how Over The Shoulder Coder should help the PRIMARY USER complete the actual task.
+First judge whether another answer is warranted. For an automatic refresh with a previous_answer, compare the actual meaning of new screen/audio evidence with the current answer and task. Set answer_needed=false when the existing answer still covers the situation. A new observation ID, timestamp, screenshot, OCR wording, visual uncertainty phrasing, or reworded memory entry is not by itself new task information. Neither is silence, window expiration, scrolling over already-known content, or an acknowledgment without a consequential decision. Without a new request, do not generate another answer just to paraphrase the previous one or improve its style.
+Set answer_needed=true for a new unanswered question, objection, or explicit request (including revising or explaining the existing answer), a changed requirement/decision, a relevant code/data/error change, newly revealed relevant evidence, or real task progress that makes the existing assistance incomplete or stale. A single changed operator or number can matter; never judge substance by the quantity of changed text. Applied code is different from a prior unimplemented suggestion. Keep participants' intent and attribution intact. Explain what specifically warrants an update, or why the current answer remains sufficient, in answer_reason.
+An explicit_help request is an intentional request for another response and bypasses this automatic gate. The first answer also must proceed. When no new answer is needed, retain the existing plan with reuse_previous=true and plan=null. Deciding that the plan still fits is separate from deciding that another answer is needed: an unchanged plan can still produce a necessary response to new evidence.
 Begin by understanding the deliverable, audience, constraints, surrounding conversation, and available evidence. Choose a coherent approach and specific instructions for doing this task well before selecting the output sections.
 There is no fixed catalog of task modes or section names. Invent the useful contract for this task. Examples such as code, clarifying_questions, algorithmic_complexity, or component_deep_dives are illustrations, not mandatory headings. An unfamiliar task may need entirely different names and nested data structures.
 For each output, choose its key, readable label, purpose, generation instructions, and presentation. Order outputs by usefulness, putting the primary deliverable first. Avoid a grab-bag of tangential sections or questions that do not help finish the work.
@@ -202,6 +207,8 @@ def structured_text(value, *, level=0):
 
 
 class TaskPlanningProvider:
+    gates_automatic_refresh = True
+
     def __init__(self, base, planner):
         self.base, self.planner, self.choice = base, planner, base.choice
         self.last_raw_response = None
@@ -221,12 +228,18 @@ class TaskPlanningProvider:
         token.check()
         plan_progress = Progress(progress, getattr(progress, "trace", None), **{**getattr(progress, "fields", {}), "lane": "plan"})
         progress("Planning the task and its output sections…")
+        planning_context = snapshot.prompt_context()
+        planning_context["verified_local_files"] = verified_from_snapshot(snapshot)
         decision = PlanDecision.model_validate(self.planner.generate_json(
             snapshot, "planner", token, plan_progress, schema=PlanDecision.model_json_schema(), system=PLANNING_SYSTEM,
-            prompt=json.dumps(snapshot.prompt_context(), ensure_ascii=False),
+            prompt=json.dumps(planning_context, ensure_ascii=False),
         ))
         token.check()
         self.last_decision = decision.model_dump()
+        if (snapshot.automatic_refresh and json.loads(snapshot.previous_answer) and previous
+                and not decision.answer_needed and decision.reuse_previous):
+            record_progress(progress, "refresh_reviewed", outcome="unchanged", result_hash=digest(decision.model_dump()))
+            return NoAnswerUpdate(reason=decision.answer_reason)
         plan = TaskPlan.model_validate(previous) if decision.reuse_previous else decision.plan
         if plan is None:
             raise ValueError("The planner did not provide a usable task plan")
@@ -238,6 +251,11 @@ class TaskPlanningProvider:
                 raise ValueError("The task plan cites unknown observations")
         schema, encodings, data_schemas = contract_for(plan)
         self.last_plan = plan.model_dump()
+        record_progress(progress, "refresh_reviewed", outcome="answer_needed", result_hash=digest(decision.model_dump()))
+        allow_quick = getattr(progress, "allow_quick", None)
+        if allow_quick:
+            allow_quick()
+        token.check()
         record_progress(progress, "task_planned", result_hash=digest(self.last_plan), reason="reused" if decision.reuse_previous else "new")
         progress("Producing the planned outputs…")
         context = snapshot.prompt_context()
@@ -300,7 +318,7 @@ class TaskPlanningProvider:
                 notes.append({"kind": "section_rejected", "section": key, "error_type": type(error).__name__})
         plan_sources = [sid for sid in plan.source_ids if sid in known] or list(known)[:1]
         plan_review = {"review": {"decision": "kept" if decision.reuse_previous else "revised" if previous else "created",
-                                  "reason": decision.reason}, **self.last_plan}
+                                  "reason": decision.reason, "answer_reason": decision.answer_reason}, **self.last_plan}
         artifacts.append(dict(id="_assistance_plan", title="Plan", kind="structured", content=json.dumps(plan_review, ensure_ascii=False),
                               language="json", path="", basis="discussion", source_ids=plan_sources, annotations=[], nodes=[], edges=[]))
         envelope = {key: raw.get(key, [] if key in {"conversation", "observed_files", "open_questions"} else "")
@@ -310,6 +328,7 @@ class TaskPlanningProvider:
         self.last_raw_text = getattr(self.base, "last_raw_text", "")
         response = prepare_response(envelope, snapshot, lane, token, progress, provider=self.base)
         response._task_plan = self.last_plan
+        response._refresh_reason = decision.answer_reason
         response._delivery_notes.extend(notes)
         if notes:
             labels = [fields[n["section"]].label if n["section"] in fields else n["section"] for n in notes]

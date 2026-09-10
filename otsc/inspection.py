@@ -117,6 +117,7 @@ class SnapshotTools:
 
 class InspectionProvider:
     def __init__(self, base, *, max_steps=3, deadline_seconds=30):
+        self.gates_automatic_refresh = getattr(base, "gates_automatic_refresh", False)
         self.base = base
         self.choice = base.choice
         self.max_steps = max_steps

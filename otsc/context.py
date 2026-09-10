@@ -49,6 +49,7 @@ class Snapshot:
     omitted_observation_ids: tuple[str, ...] = ()
     context_updated_through: int = -1
     task_plan: str = "{}"
+    automatic_refresh: bool = False
 
     def prompt_context(self) -> dict:
         observations = []
@@ -74,6 +75,7 @@ class Snapshot:
             "evidence_revision": self.evidence_revision,
             "previous_answer": json.loads(self.previous_answer),
             "task_plan": json.loads(self.task_plan),
+            "refresh_request": "automatic" if self.automatic_refresh else "explicit_help",
             "observed_workspace": self.workspace,
             "previous_task": self.previous_task,
             "previous_summary": self.previous_summary,

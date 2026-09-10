@@ -45,6 +45,8 @@ Context retains five minutes of screen/audio observations (up to 1,000 entries),
 
 The [task-planning report](task-planning.md) records dynamic output contracts, ongoing plan-fit decisions, generated images, and the audio-only capture migration. Its live examples include plan reuse, a coding-to-design pivot, and an unfamiliar nested JSON deliverable. Native checks cover PNG/JSON presentation, frozen image completion, resize/scroll, the channel-1 keypad, Older/Newer/Latest controls, and checkpoint restoration without rolling live memory back. The earlier [continuous workflow report](continuous-context.md) records the capture/context changes. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
 
+The later [automatic refresh change](automatic-refresh.md) suppresses answer generation when new OCR/audio evidence adds nothing substantive. Memory-only revisions do not trigger a review; the existing planner can retain the prior answer, and a final content comparison prevents citation/Plan-metadata churn from creating duplicate history. Explicit Help now bypasses this gate. Seven live synthetic judgment checks covered both harmless repetition and consequential small changes.
+
 ## What has been verified
 
 Automated tests exercise source provenance, code annotation coverage, same-screen gating, revision isolation, quick/deep ordering, pin staleness, HTTP streaming adapters and errors, credential-free settings, source filtering, exact diff application in temporary fixtures, observed excerpt offsets, WAV construction, separate transcription credentials, native audio-buffer decoding, and real Tesseract OCR on a synthetic image.

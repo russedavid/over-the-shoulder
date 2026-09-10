@@ -768,7 +768,10 @@ class Controller(NSObject):
         elif kind == "image_ready":
             self.accept_image(event)
         elif kind == "started":
-            self.status.setStringValue_(f"Quick and deep assistance started · context {event['revision']}.")
+            self.status.setStringValue_(
+                "Checking whether new evidence warrants another answer…" if event.get("reviewing")
+                else f"Quick and deep assistance started · context {event['revision']}."
+            )
         elif (kind == "progress" and event["request_id"] == self.coordinator.request_id
               and event["lane"] in self.coordinator.active_lanes):
             self.status.setStringValue_(event["lane"].capitalize() + ": " + event["message"][:280])
@@ -782,12 +785,21 @@ class Controller(NSObject):
                 and self.context.task_revision == self.coordinator.last_requested_task_revision
             ):
                 retain_text(self.summary, "Quick thought\n\n" + event["message"][7:])
-        elif kind in {"result", "error", "cancelled"}:
-            if kind == "result" and (self.body.selectedRange().length or self.summary.selectedRange().length):
-                self.output_history.freeze()
+        elif kind in {"result", "error", "cancelled", "unchanged"}:
             if not self.coordinator.accept(event):
                 return
+            if kind == "unchanged" or event.get("duplicate"):
+                # Reaffirm an unchanged in-flight image after a minor task edit,
+                # without creating another output/history entry.
+                latest = self.output_history.latest
+                if latest and latest.session_id == self.context.session_id and not self.demo:
+                    self.image_worker.submit(latest, self.context.session_id, self.context.task_revision)
+                self.status.setStringValue_("Keeping the current answer. " + self.coordinator.last_refresh_reason[:280])
+                self.refresh_passive_views()
+                return
             if kind == "result":
+                if self.body.selectedRange().length or self.summary.selectedRange().length:
+                    self.output_history.freeze()
                 job = event["job"]
                 self.output_history.append(
                     event["response"], identity=job.request_id + ":" + job.lane,
@@ -957,7 +969,9 @@ class Controller(NSObject):
         self.image_scroll.setHidden_(not show_image)
         self.body_scroll.setHidden_(show_diagram or show_image)
         if view == "Context":
-            text = "Working context (revisable, source-linked)\n\n" + "\n".join(
+            review = self.coordinator.last_refresh_reason
+            text = ("Latest answer-refresh decision\n" + review + "\n\n" if review else "")
+            text += "Working context (revisable, source-linked)\n\n" + "\n".join(
                 f"{item.kind} · {item.basis} · {', '.join(item.source_ids)}\n{item.text}"
                 for item in self.context.context_items.values()
             ) + "\n\nCaptured observations\n\n" + "\n\n".join(
@@ -1193,6 +1207,7 @@ class Controller(NSObject):
         self.coordinator.pending_version = None
         self.coordinator.request_id = ""
         self.coordinator.last_requested_revision = -1
+        self.coordinator.last_refresh_reason = ""
         # Browsing freezes presentation only; generation/context keep the latest.
         self.coordinator.pinned = False
         self.output_history.clear()
@@ -1544,6 +1559,7 @@ class Controller(NSObject):
         self.coordinator.pending_version = None
         self.coordinator.pinned = False
         self.coordinator.last_requested_revision = -1
+        self.coordinator.last_refresh_reason = ""
         self.coordinator.history.clear()
         self.output_history.clear()
         self.displayed_artifacts = []
