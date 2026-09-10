@@ -215,7 +215,7 @@ class Controller(NSObject):
         ]:
             self.controls[name] = button(self.root, title, self, action)
         self.controls["sharing"].setToolTip_(
-            "Starts Off each launch. On allows window sharing and briefly hides the window for this app's screenshots."
+            "Off: visible to you, excluded from this app's screenshots. On: allow sharing; hide briefly for this app's captures. Starts Off each launch."
         )
         self.goal = field(
             self.root,
@@ -576,8 +576,8 @@ class Controller(NSObject):
         self.window.setSharingType_(A.NSWindowSharingReadOnly if self.window_sharing else A.NSWindowSharingNone)
         self.controls["sharing"].setTitle_("Sharing: On" if self.window_sharing else "Sharing: Off")
         self.status.setStringValue_(
-            "Window sharing on. Screenshots use a 10 ms pre-capture wait while the window is hidden."
-            if self.window_sharing else "Window sharing off. Screenshots leave the window visible."
+            "Sharing on: window can be shared; hidden briefly for this app's own screenshots."
+            if self.window_sharing else "Sharing off: window excluded from this app's screenshots, but still visible to you."
         )
 
     def selectProject_(self, sender):
