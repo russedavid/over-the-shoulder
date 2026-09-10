@@ -337,6 +337,7 @@ class ContinuousControllerTests(unittest.TestCase):
             context_build_pending=False, auto_help_pending=False, overlay_hidden=False, next_answer_attempt=0,
             window_sharing=False, capture_hidden_for="", capture_frame_pending=False, controls={"sharing": Mock()},
             trace=SimpleNamespace(record=lambda *a, **kw: None), refresh_body=lambda: None,
+            refresh_passive_views=lambda: None,
             checkpoint_if_enabled=lambda: None,
         )
         controller.capture_context = lambda **kw: Controller.capture_context(controller, **kw)

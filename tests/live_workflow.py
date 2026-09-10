@@ -191,6 +191,9 @@ class LiveRun(NSObject):
                     observed_files=[],
                     open_questions=[],
                 )
+                self.controller.output_history.append(
+                    coordinator.current, session_id=context.session_id, goal=context.goal, lane="synthetic follow-up",
+                )
                 self.controller.render_response()
                 assert self.controller.copy_text() == current_code
                 self.finish(

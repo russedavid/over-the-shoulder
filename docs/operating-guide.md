@@ -2,6 +2,8 @@
 
 Run `python ots.py`. Existing screen/audio controls, MIDI notes, copy behavior, pinning, and 5% click-through opacity remain available.
 
+Selecting an artifact or History holds the current output. Older/Newer browse the saved outputs without resuming live display. Latest returns to the newest result and resumes updates; Unpin does the same. The History dropdown selects an individual output and opens its artifacts. New capture, context updates, and answers continue while the pane is frozen. The recent timeline retains 24 outputs plus an older one you are holding. Checkpoints keep your browsing selection and the newest model context separately.
+
 ## Task memory
 
 **Task details…** records explicit constraints and decisions, one per line. Those fields are maintained by the user; model suggestions do not update them automatically.

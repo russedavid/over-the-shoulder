@@ -34,7 +34,8 @@ Missing or misaligned code explanations trigger at most one bounded, annotation-
 2. Streaming APIs can expose a provisional summary. Only a validated complete response enters the artifact view.
 3. Deep output can replace quick output; late quick output cannot replace deep output.
 4. New automatic observations enter context immediately while a request uses its immutable snapshot. They do not starve that request; the next answer catches up. Manual Help now flushes audio and supersedes prior work using available context, while a fresh screen read runs independently. Session/request/task-revision checks reject stale responses.
-5. Pinning or selecting text holds replacements. Unpinning discards a pending result from a superseded request, session or task.
-6. Views retain their text state. Resize, view selection, annotation toggles, export, and copy reuse existing artifacts. Recent accepted artifacts remain available in History.
+5. Presentation has its own `OutputHistory`, independent of the coordinator's latest accepted answer. Pinning, selecting output text, choosing an artifact, or entering History freezes the visible snapshot. Accepted results continue updating task context and the recent timeline in the background.
+6. Older/Newer browse complete output snapshots, including inherited artifacts and the original conversation sources. Reaching the newest entry through Newer remains frozen. Latest (or Unpin) clears selection and resumes live display. History offers individually selectable outputs. The most recent 24 entries plus an older held entry are retained.
+7. Resize, annotation toggles, export, and copy reuse the selected artifacts. Checkpoints preserve the selected output/artifact separately from the latest model context; restoring a browsing position cannot roll task memory back or authorize new capture.
 
 [`otsc/demo.py`](../otsc/demo.py) supplies the current, explicitly synthetic code and design examples. The older [assistance-example.json](examples/assistance-example.json) is retained as the original product-design sketch; its envelope predates the implemented schema.

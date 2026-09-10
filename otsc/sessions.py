@@ -10,6 +10,7 @@ from pydantic import Field
 
 from otsc.context import ContextStore
 from otsc.models import Artifact, Assistance, ContextItem, Observation, ObservedFile, Record, safe_relative_path
+from otsc.output_history import MAX_OUTPUTS, OutputSnapshot
 from otsc.privacy import app_directory, atomic_private_write, redact
 
 MAX_CHECKPOINT_BYTES = 8_000_000
@@ -29,6 +30,7 @@ class ContextCheckpoint(Record):
     retained_sources: list[Observation] = Field(default_factory=list, max_length=1000)
     retired_files: dict[str, dict] = Field(default_factory=dict)
     previous_answer: str = Field(default="{}", max_length=300000)
+    previous_artifacts: str | None = Field(default=None, max_length=300000)
 
 
 class SessionDocument(Record):
@@ -43,9 +45,11 @@ class SessionDocument(Record):
     pinned: bool
     base_hashes: dict[str, str]
     artifact_bases: dict[str, dict[str, str]] = Field(default_factory=dict)
+    outputs: list[OutputSnapshot] = Field(default_factory=list, max_length=MAX_OUTPUTS + 1)
+    selected_output_id: str | None = None
 
 
-def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", selected_view="Artifact"):
+def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", selected_view="Artifact", output_history=None):
     with context._lock:
         observations = [o.model_copy(update={"image_path": ""}, deep=True) for o in context.observations]
         state = ContextCheckpoint(
@@ -62,6 +66,7 @@ def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", 
             retained_sources=[o.model_copy(update={"image_path": ""}, deep=True) for o in context.retained_sources.values()],
             retired_files=context.retired_files,
             previous_answer=context.previous_answer,
+            previous_artifacts=context.previous_artifacts,
         )
         return SessionDocument(
             saved_at=time.time(),
@@ -71,9 +76,11 @@ def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", 
             displayed_artifacts=list(displayed_artifacts),
             selected_id=selected_id,
             selected_view=selected_view,
-            pinned=coordinator.pinned,
+            pinned=output_history.frozen if output_history is not None else coordinator.pinned,
             base_hashes={},
             artifact_bases=getattr(coordinator, "artifact_bases", {}),
+            outputs=output_history.entries if output_history is not None else [],
+            selected_output_id=output_history.selected_id if output_history is not None else None,
         )
 
 
@@ -123,11 +130,17 @@ def load_session(path):
         ):
             raise ValueError("Session contains an invalid proposal base")
     # Paths in an imported file are data, never permission to open a local image.
-    for observation in [*document.context.observations, *document.context.retained_sources]:
+    for observation in [*document.context.observations, *document.context.retained_sources,
+                        *(o for output in document.outputs for o in output.sources)]:
         observation.image_path = ""
         observation.text = redact(observation.text)
     if not isinstance(json.loads(document.context.previous_answer), dict):
         raise ValueError("Saved previous answer must be an object")
+    if document.context.previous_artifacts is not None and not isinstance(json.loads(document.context.previous_artifacts), list):
+        raise ValueError("Saved prior artifacts must be a list")
+    ids = [output.id for output in document.outputs]
+    if len(ids) != len(set(ids)) or (document.selected_output_id is not None and document.selected_output_id not in ids):
+        raise ValueError("Saved output selection is invalid")
     return document
 
 
@@ -140,9 +153,8 @@ def restore_context(document, *, authorized_project=""):
     context.previous_task, context.previous_summary = saved.previous_task, saved.previous_summary
     context.open_questions = tuple(saved.open_questions[:20])
     context.constraints, context.decisions = tuple(saved.constraints), tuple(saved.decisions)
-    context.previous_artifacts = json.dumps(
-        [a.model_dump(exclude={"annotations"}) for a in document.displayed_artifacts]
-    )
+    context.previous_artifacts = saved.previous_artifacts if saved.previous_artifacts is not None else json.dumps(
+        [a.model_dump(exclude={"annotations"}) for a in document.displayed_artifacts])
     context.repo_root = authorized_project if authorized_project and authorized_project == saved.project_hint else ""
     context.verified_files = {}  # Always re-read authorized source before treating it as current.
     context.restored = True

@@ -13,6 +13,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Five-minute observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
 | Full-resolution Astra low/Fast screen reading | `otsc/perception.py` |
 | Background source-linked memory and observed workspace updates | `otsc/context_builder.py` |
+| Frozen output snapshots and Older/Newer/Latest navigation | `otsc/output_history.py` |
 | Two bounded response workers and revision checks | `otsc/scheduler.py` |
 | Streaming HTTP providers | `otsc/providers.py` |
 | Existing Codex CLI integration | `otsc/codex.py` |
@@ -38,7 +39,7 @@ Microphone capture uses sounddevice; system audio uses ScreenCaptureKit and excl
 
 Context retains five minutes of screen/audio observations (up to 1,000 entries), typed context, source evidence for accumulated memory, observed fragments, prior answers/artifacts, unresolved questions, and at most 30 filtered source files / 180 KB in the selected project snapshot. The source-text snapshot budget is 800 KB with explicit omitted IDs; the former 24 KB budget is gone. A separate bounded context worker maintains up to 80 source-linked notes while two fixed answer workers consume immutable snapshots. New passive evidence enters immediately without invalidating an in-flight answer. Explicit task/project edits and newer requests still supersede old work. Long-running Codex work has a 240-second deadline.
 
-The [continuous workflow report](continuous-context.md) records the 92-test suite, native preservation check, and finite live design/revision run using real OCR, ASR, context updates and Astra answers. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
+The suite now has 99 passing tests. Native checks additionally cover artifact/history selection, frozen output while a new valid answer arrives, Older/Newer/Latest controls, and restoring an older selection without rolling model context back. The [continuous workflow report](continuous-context.md) records the capture/context changes and finite live design/revision run. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
 
 ## What has been verified
 
