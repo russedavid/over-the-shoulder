@@ -122,7 +122,15 @@ class ScreenCapture:
             self.paths.clear()
 
 
-def make_system_audio():
+def make_system_audio(backend="coreaudio"):
+    if backend == "coreaudio":
+        from otsc.audio_tap import SystemAudioTap
+
+        return SystemAudioTap()
+    return make_screen_audio()
+
+
+def make_screen_audio():
     """Imports and constructs native capture only after Start has been pressed."""
     import CoreMedia
     import dispatch
@@ -166,6 +174,8 @@ def make_system_audio():
     class SystemAudio:
         def __init__(self):
             self.stream = None
+            self.closed = False
+            self.lifecycle_lock = threading.RLock()
             self.delegate = Delegate.alloc().init()
             self.dispatch_queue = dispatch.dispatch_queue_create(b"otsc.audio", None)
 
@@ -173,6 +183,13 @@ def make_system_audio():
             ready, errors = threading.Event(), []
 
             def got_content(content, error):
+                with self.lifecycle_lock:
+                    if self.closed:
+                        ready.set()
+                        return
+                    begin_capture(content, error)
+
+            def begin_capture(content, error):
                 if error or not content or not content.displays():
                     errors.append(str(error or "No display available for system audio"))
                     ready.set()
@@ -193,6 +210,8 @@ def make_system_audio():
                     return
 
                 def started(error):
+                    if self.closed:
+                        self.stop()
                     if error:
                         errors.append(str(error))
                     ready.set()
@@ -201,8 +220,10 @@ def make_system_audio():
 
             SCK.SCShareableContent.getShareableContentWithCompletionHandler_(got_content)
             if not ready.wait(12):
+                self.stop()
                 raise RuntimeError("System audio did not start; check macOS Screen & System Audio Recording permission")
             if errors:
+                self.stop()
                 raise RuntimeError("System audio: " + errors[0])
 
         def drain(self):
@@ -213,9 +234,17 @@ def make_system_audio():
             return np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
 
         def stop(self):
-            if self.stream:
-                self.stream.stopCaptureWithCompletionHandler_(lambda error: None)
-                self.stream = None
+            with self.lifecycle_lock:
+                self.closed = True
+                if self.stream:
+                    # Retain the stream through completion, including a late
+                    # start callback, so it cannot leave an orphan capture.
+                    stream = self.stream
+
+                    def stopped(error):
+                        _ = stream  # Keep the stream alive through completion.
+
+                    stream.stopCaptureWithCompletionHandler_(stopped)
 
     return SystemAudio()
 
@@ -326,7 +355,7 @@ class AudioCapture:
                 )
                 self.mic.start()
             if self.settings.system_audio:
-                self.system = make_system_audio()
+                self.system = make_system_audio(self.settings.system_audio_backend)
                 self.system.start()
             if self.stop_event.is_set():
                 return

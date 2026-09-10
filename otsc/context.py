@@ -48,6 +48,7 @@ class Snapshot:
     recent_observation_ids: tuple[str, ...] = ()
     omitted_observation_ids: tuple[str, ...] = ()
     context_updated_through: int = -1
+    task_plan: str = "{}"
 
     def prompt_context(self) -> dict:
         observations = []
@@ -72,6 +73,7 @@ class Snapshot:
             "context_updated_through_evidence_revision": self.context_updated_through,
             "evidence_revision": self.evidence_revision,
             "previous_answer": json.loads(self.previous_answer),
+            "task_plan": json.loads(self.task_plan),
             "observed_workspace": self.workspace,
             "previous_task": self.previous_task,
             "previous_summary": self.previous_summary,
@@ -108,6 +110,7 @@ class ContextStore:
     retained_sources: dict[str, Observation] = field(default_factory=dict)
     retired_files: dict[str, dict] = field(default_factory=dict)
     previous_answer: str = "{}"
+    task_plan: str = "{}"
     clock: Callable[[], float] = field(default=time.time, repr=False)
     _screen_fingerprint: str = ""
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
@@ -216,6 +219,8 @@ class ContextStore:
             self.previous_task, self.previous_summary = response.task, response.summary
             if replace_open_questions:
                 self.open_questions = tuple(response.open_questions[:20])
+                if response._task_plan is not None:
+                    self.task_plan = json.dumps(response._task_plan, ensure_ascii=False)
                 # Preserve the last substantive answer, including diagram nodes and
                 # conversation replies. A quick acknowledgment must not replace it.
                 self.previous_answer = json.dumps(response.model_dump(exclude={"observed_files"}), ensure_ascii=False)
@@ -308,6 +313,7 @@ class ContextStore:
                 recent_observation_ids=tuple(o.id for o in recent if o.id not in omitted),
                 omitted_observation_ids=tuple(omitted),
                 context_updated_through=self.context_updated_through,
+                task_plan=self.task_plan,
             )
 
     def clear(self):
@@ -329,5 +335,6 @@ class ContextStore:
             self.memory_revision = 0
             self.context_updated_through = -1
             self.previous_answer = "{}"
+            self.task_plan = "{}"
             if self.goal:
                 self.add("task", self.goal, "typed", "primary_user")

@@ -1,4 +1,4 @@
-"""Original MIDI note bindings, dispatched onto the application's event queue."""
+"""Channel-1 keypad bindings, dispatched onto the application's event queue."""
 
 import os
 import threading
@@ -7,21 +7,36 @@ import time
 from otsc.privacy import redact
 
 NOTE_ACTIONS = {
-    38: "voice_followup",
-    39: "voice_question",
-    40: "smaller",
-    41: "bigger",
-    42: "left",
-    43: "visibility",
-    44: "down",
-    45: "up",
-    46: "right",
-    47: "help",
-    48: "next_view",
-    49: "next_page",
-    50: "capture",
-    51: "new_task",
+    36: "older_output",       # Knob counterclockwise
+    37: "newer_output",       # Knob clockwise; pressing it changes hardware mode
+    38: "help",               # Circle
+    39: "follow",             # Triangle
+    40: "pin",                # Square
+    41: "visibility",         # X
+    42: "view_artifact",      # M1
+    43: "new_task",           # Num/Clear
+    44: "previous_artifact",  # /
+    45: "next_artifact",      # *
+    46: "smaller",            # -
+    47: "view_conversation",  # M2
+    48: "page_up",            # 7
+    49: "up",                 # 8
+    50: "page_down",          # 9
+    51: "bigger",             # +
+    52: "view_context",       # M3
+    53: "left",               # 4
+    54: "down",               # 5
+    55: "right",              # 6
+    56: "view_files",         # M4
+    57: "copy_clean",         # 1
+    58: "center",             # 2
+    59: "capture",            # 3
+    60: "latest_output",      # Enter
+    61: "view_history",       # M5
+    62: "voice_question",     # 0
+    63: "click_through",      # .
 }
+KNOB_NOTES = {36, 37}
 
 
 class MidiInput:
@@ -39,6 +54,9 @@ class MidiInput:
     def receive(self, message):
         if self.stop_event.is_set() or getattr(message, "type", None) != "note_on":
             return
+        # MIDI channel 1 is channel 0 in mido's API.
+        if getattr(message, "channel", None) != 0:
+            return
         if getattr(message, "velocity", 0) <= 0:
             return
         note = getattr(message, "note", None)
@@ -47,7 +65,7 @@ class MidiInput:
             return
         now = self.clock()
         with self.lock:
-            if now - self.last_notes.get(note, float("-inf")) < 0.15:
+            if note not in KNOB_NOTES and now - self.last_notes.get(note, float("-inf")) < 0.15:
                 return
             self.last_notes[note] = now
         self.events.put({"type": "midi", "note": note, "action": action})

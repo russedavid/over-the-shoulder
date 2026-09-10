@@ -1,0 +1,29 @@
+MIDI channel 1. Bracketed numbers are MIDI note numbers.
+
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| KNOB              | Circle [38]     | Triangle [39]   | Square [40]     | X [41]          |
+| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | Show/hide       |
+| CW 37: Newer      |                 |                 |                 |                 |
+| Press: MIDI/keys  |                 |                 |                 |                 |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M1 [42]           | Num/Clear [43]  | / [44]          | * [45]          | - [46]          |
+| Artifact          | New task        | Prev artifact   | Next artifact   | Smaller         |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M2 [47]           | 7 [48]          | 8 [49]          | 9 [50]          | + [51]          |
+| Conversation      | Page up         | Move up         | Page down       | Bigger          |
++-------------------+-----------------+-----------------+-----------------+                 |
+| M3 [52]           | 4 [53]          | 5 [54]          | 6 [55]          |                 |
+| Context           | Move left       | Move down       | Move right      |                 |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M4 [56]           | 1 [57]          | 2 [58]          | 3 [59]          | Enter [60]      |
+| Observed files    | Copy clean      | Center window   | Capture now     | Latest / live   |
++-------------------+-----------------------------------+-----------------+                 |
+| M5 [61]           | 0 [62]                            | . [63]          |                 |
+| History           | Voice start/stop                  | Click-through   |                 |
++-------------------+-----------------------------------+-----------------+-----------------+
+
+Knob turns and artifact/page navigation freeze the output.
+Enter returns to the latest output and resumes live updates.
+Movement is 50 pixels per press. +/- resize both dimensions by 50 pixels.
+Click-through uses at most 5% background opacity; output text stays opaque.
+0 finishes recording and requests help on the second press.

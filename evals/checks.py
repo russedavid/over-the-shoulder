@@ -229,10 +229,14 @@ def task_checks(item, response, snapshot):
         add("contract_and_provenance", False, str(error))
     kinds = item["artifact_kinds"]
     if kinds:
+        requested = any(a.kind in kinds for a in response.artifacts)
+        if not requested and "diagram" in kinds and any(a.kind == "image" for a in response.artifacts):
+            requested = None
         add(
             "requested_artifact",
-            any(a.kind in kinds for a in response.artifacts),
-            "The task requires one of: " + ", ".join(kinds),
+            requested,
+            "The generated drawing requires a separate image-generation and visual-review check."
+            if requested is None else "The task requires one of: " + ", ".join(kinds),
         )
     if item["no_observed_files"]:
         add(

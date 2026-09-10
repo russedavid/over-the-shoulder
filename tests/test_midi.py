@@ -6,29 +6,22 @@ from types import SimpleNamespace
 from otsc.midi import MidiInput
 
 
-def note(number, *, kind="note_on", velocity=100):
-    return SimpleNamespace(type=kind, note=number, velocity=velocity)
+def note(number, *, kind="note_on", velocity=100, channel=0):
+    return SimpleNamespace(type=kind, note=number, velocity=velocity, channel=channel)
 
 
 class MidiTests(unittest.TestCase):
-    def test_original_controls_keep_their_note_numbers(self):
+    def test_keypad_notes_follow_the_physical_layout(self):
         events = queue.Queue()
         controller = MidiInput(events)
         expected = {
-            38: "voice_followup",
-            39: "voice_question",
-            40: "smaller",
-            41: "bigger",
-            42: "left",
-            43: "visibility",
-            44: "down",
-            45: "up",
-            46: "right",
-            47: "help",
-            48: "next_view",
-            49: "next_page",
-            50: "capture",
-            51: "new_task",
+            36: "older_output", 37: "newer_output",
+            38: "help", 39: "follow", 40: "pin", 41: "visibility",
+            42: "view_artifact", 43: "new_task", 44: "previous_artifact", 45: "next_artifact", 46: "smaller",
+            47: "view_conversation", 48: "page_up", 49: "up", 50: "page_down", 51: "bigger",
+            52: "view_context", 53: "left", 54: "down", 55: "right",
+            56: "view_files", 57: "copy_clean", 58: "center", 59: "capture", 60: "latest_output",
+            61: "view_history", 62: "voice_question", 63: "click_through",
         }
         for number, action in expected.items():
             controller.receive(note(number))
@@ -38,21 +31,42 @@ class MidiTests(unittest.TestCase):
         events = queue.Queue()
         now = [0.0]
         controller = MidiInput(events, clock=lambda: now[0])
-        controller.receive(note(47))
+        controller.receive(note(38))
         now[0] = 0.10
-        controller.receive(note(47))
-        controller.receive(note(50))
-        controller.receive(note(47, kind="note_off"))
-        controller.receive(note(47, velocity=0))
-        controller.receive(note(47, kind="control_change"))
+        controller.receive(note(38))
+        controller.receive(note(59))
+        controller.receive(note(38, kind="note_off"))
+        controller.receive(note(38, velocity=0))
+        controller.receive(note(38, kind="control_change"))
         controller.receive(note(99))
         now[0] = 0.16
-        controller.receive(note(47))
+        controller.receive(note(38))
         self.assertEqual([events.get_nowait()["action"] for _ in range(events.qsize())], ["help", "capture", "help"])
         controller.close()
         now[0] = 1.0
-        controller.receive(note(47))
+        controller.receive(note(38))
         self.assertTrue(events.empty())
+
+    def test_fast_knob_turns_preserve_every_detent_and_direction(self):
+        events = queue.Queue()
+        now = [0.0]
+        controller = MidiInput(events, clock=lambda: now[0])
+        for number in (36, 36, 36, 37, 37, 36):
+            controller.receive(note(number))
+            controller.receive(note(number, kind="note_off"))
+            now[0] += 0.005
+        self.assertEqual([events.get_nowait()["action"] for _ in range(events.qsize())],
+                         ["older_output", "older_output", "older_output", "newer_output", "newer_output", "older_output"])
+
+    def test_only_channel_one_is_accepted(self):
+        events = queue.Queue()
+        controller = MidiInput(events)
+        for channel in range(1, 16):
+            controller.receive(note(36, channel=channel))
+            controller.receive(note(38, channel=channel))
+        self.assertTrue(events.empty())
+        controller.receive(note(36, channel=0))
+        self.assertEqual(events.get_nowait()["action"], "older_output")
 
     def test_controller_reconnects_and_closes_ports_on_its_worker(self):
         class Port:
@@ -89,7 +103,7 @@ class MidiTests(unittest.TestCase):
             backend.names = ["unrelated", "controller"]
             eventually(lambda: len(backend.ports) == 1)
             self.assertEqual(backend.ports[0].name, "controller")
-            backend.ports[0].callback(note(43))
+            backend.ports[0].callback(note(41))
             backend.names = []
             eventually(lambda: backend.ports[0].closed)
             backend.names = ["controller"]

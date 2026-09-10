@@ -31,6 +31,7 @@ class ContextCheckpoint(Record):
     retired_files: dict[str, dict] = Field(default_factory=dict)
     previous_answer: str = Field(default="{}", max_length=300000)
     previous_artifacts: str | None = Field(default=None, max_length=300000)
+    task_plan: str = Field(default="{}", max_length=150000)
 
 
 class SessionDocument(Record):
@@ -67,6 +68,7 @@ def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", 
             retired_files=context.retired_files,
             previous_answer=context.previous_answer,
             previous_artifacts=context.previous_artifacts,
+            task_plan=context.task_plan,
         )
         return SessionDocument(
             saved_at=time.time(),
@@ -136,6 +138,8 @@ def load_session(path):
         observation.text = redact(observation.text)
     if not isinstance(json.loads(document.context.previous_answer), dict):
         raise ValueError("Saved previous answer must be an object")
+    if not isinstance(json.loads(document.context.task_plan), dict):
+        raise ValueError("Saved task plan must be an object")
     if document.context.previous_artifacts is not None and not isinstance(json.loads(document.context.previous_artifacts), list):
         raise ValueError("Saved prior artifacts must be a list")
     ids = [output.id for output in document.outputs]
@@ -164,4 +168,5 @@ def restore_context(document, *, authorized_project=""):
     context.retained_sources = {o.id: o.model_copy(deep=True) for o in saved.retained_sources}
     context.retired_files = dict(saved.retired_files)
     context.previous_answer = saved.previous_answer
+    context.task_plan = saved.task_plan
     return context

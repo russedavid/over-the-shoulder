@@ -30,13 +30,19 @@ Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Goog
 
 Continuous screen reading uses **GPT-6 Astra, low reasoning, Fast processing**, at full screenshot resolution. A separate Astra low/Fast worker maintains accumulated context and the observed workspace. These workers use the existing Codex sign-in; the `ocr` and `context_builder` preferences are saved separately from the answer models.
 
+Before each deep answer, a separate planning pass chooses the task's approach, instructions, and named output sections. It reviews the existing plan against the latest evidence: minor clarifications keep the contract, while a different deliverable can change it. Select **Plan** in the artifact menu to read the decision and reason. Plans can define unfamiliar JSON structures as well as text, annotated code, and generated images. Planning and image models are editable in the lower part of Settings.
+
 1. Describe the task, or let the captured work establish it. You can add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt.
 2. **Capture now** reads one screen with Astra. **Help now** (Cmd-Return) finishes the current speech chunk and asks from the latest available context while a fresh screen reading runs. If there is no context yet, it waits for that first reading. **Start following** continuously takes a fresh screenshot as soon as the previous OCR call finishes, alongside audio capture and transcription.
-3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Diagrams export as SVG and code changes as diffs.
-4. Selecting an artifact or **History** freezes the displayed output. **Older** and **Newer** browse saved outputs and keep the pane frozen—even at the newest entry. **Latest** jumps to the newest result and resumes live updates. **Pin** and selecting output text also hold the pane. Cmd-Shift-I toggles click-through at 5% opacity; clicking the Dock icon restores interaction and full opacity.
+3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Generated images copy/export as PNG, structured sections as JSON, and code changes as diffs. Images render in the background after the text arrives; unchanged image briefs reuse their pending or completed image. Old saved diagrams and the synthetic design demo retain SVG support.
+4. Selecting an artifact or **History** freezes the displayed output. **Older** and **Newer** browse saved outputs and keep the pane frozen—even at the newest entry. **Latest** jumps to the newest result and resumes live updates. **Pin** and selecting output text also hold the pane. Cmd-Shift-I toggles click-through with transparent backgrounds and fully opaque text. Clicking the Dock icon restores interaction and the normal backgrounds.
 5. **Sharing: Off** is the default on every launch. The window stays visible while screenshots are taken. **Sharing: On** allows window sharing; for the app's own screenshots it hides the window, waits 10 ms, captures, and restores it before OCR. The 10 ms is the preparation delay, in addition to the screenshot's actual duration.
 
 Capture starts only from an explicit control. Screen, microphone, and system audio can be enabled separately. macOS may request Screen & System Audio Recording and Microphone permissions for the launcher/Python application. After changing permissions, relaunch if capture still fails.
+
+System audio now defaults to an **audio-only Core Audio process tap** on macOS 14.2+. It does not create a display or ScreenCaptureKit stream. Screenshots retain the original one-shot PyAutoGUI/Pillow path. macOS can still show its normal recording/privacy indicators. The `screencapturekit` option in Settings preserves the legacy system-audio backend for older Macs; it can activate a screen-sharing indicator.
+
+Image generation uses the configured OpenAI image API account, separately from Codex subscription access. It is called only when the task plan requests a new or revised image. Provider failures stay visible without discarding usable text. See [task planning and image checks](docs/task-planning.md) for measured examples and current quality limits.
 
 Microphone and system audio remain separate channels with configurable speaker roles. These are attribution hints, not voice identification; headphones reduce the chance of remote speech also entering your microphone. Choose Groq/OpenAI transcription with its own credential, or install the optional local recognizer:
 
@@ -48,19 +54,29 @@ Local transcription loads its model on first use and may download model weights.
 
 ## MIDI controls
 
-The original note numbers are supported through CoreMIDI. The app connects to the first input and reconnects when a controller is plugged in. Only note-on presses with nonzero velocity trigger actions; the original 150 ms debounce is retained. Set `OTSC_MIDI_PORT` to an exact device name if you need a particular input.
+The Keychron K0 Max keypad uses **MIDI channel 1** (channel `0` in mido). Only note-on messages with positive velocity trigger actions. Knob detents are never debounced; other buttons retain per-note 150 ms duplicate protection. Pressing the knob changes keyboard/MIDI mode in the hardware and is not assigned an app action. The app connects to the first input and reconnects when it returns; set `OTSC_MIDI_PORT` to choose a specific input.
 
-| Note | Action |
-|---|---|
-| 38 / 39 | Start a voice question; press either again to finish and request help. Task context is retained. |
-| 40 / 41 | Make the window smaller / bigger in 50-pixel steps. |
-| 42 / 44 / 45 / 46 | Move left / down / up / right by 50 pixels. |
-| 43 | Hide / show the window. Capture updates respect the hidden state. |
-| 47 | Help now. |
-| 48 | Cycle output views, replacing the former task-mode switch. |
-| 49 | Advance a page; at the end, advance to the next artifact or wrap. |
-| 50 | Capture the current screen. |
-| 51 | Clear and start a new task. |
+| Key | MIDI note | Action |
+|---|---:|---|
+| Knob counterclockwise / clockwise | 36 / 37 | Older / Newer output; remain frozen. |
+| Circle | 38 | Help now. |
+| Triangle | 39 | Start / pause following. |
+| Square | 40 | Freeze / unfreeze output. |
+| X | 41 | Show / hide window. |
+| M1 / M2 / M3 / M4 / M5 | 42 / 47 / 52 / 56 / 61 | Artifact / Conversation / Context / Observed files / History. |
+| Num/Clear | 43 | Clear and start a new task. |
+| / and * | 44 / 45 | Previous / next artifact; freeze the output. |
+| - and + | 46 / 51 | Shrink / enlarge in 50-pixel steps, respecting minimum size. |
+| 7 and 9 | 48 / 50 | Page up / down in the current pane; freeze it and stop at its edges. |
+| 8 / 4 / 5 / 6 | 49 / 53 / 54 / 55 | Move up / left / down / right in the traditional arrow arrangement. |
+| 1 | 57 | Copy clean output. |
+| 2 | 58 | Center window. |
+| 3 | 59 | Capture now. |
+| Enter | 60 | Latest output; resume live updates. |
+| 0 | 62 | Start / finish a voice question and request help. |
+| . | 63 | Toggle click-through: at most 5% background opacity, fully opaque output text. |
+
+See the [printable keypad layout](docs/midi-keypad.txt). M1–M5 select output views within the one task workflow.
 
 Voice controls use the configured audio inputs. When following continuously, finishing a voice question keeps that capture running; a standalone voice recording closes its inputs when the question ends. MIDI callbacks enqueue actions for the AppKit thread and do not touch the window from the MIDI thread.
 

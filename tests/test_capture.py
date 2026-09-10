@@ -173,7 +173,7 @@ class CaptureTests(unittest.TestCase):
         from otsc.capture import make_system_audio
 
         samples = np.array([0.25, -0.5, 0.0], dtype=np.float32)
-        source = make_system_audio()
+        source = make_system_audio("screencapturekit")
         with (
             patch("CoreMedia.CMSampleBufferGetDataBuffer", return_value="synthetic"),
             patch("CoreMedia.CMBlockBufferGetDataLength", return_value=len(samples.tobytes())),

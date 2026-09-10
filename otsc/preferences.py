@@ -28,25 +28,30 @@ class Preferences(NSObject):
         self.window.setReleasedWhenClosed_(False)
         self.window.setTitle_("Over The Shoulder Coder · Settings")
         self.window.setBackgroundColor_(color("f8f4ec"))
-        root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 740))
-        self.window.setContentView_(root)
+        scroll = A.NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 740))
+        scroll.setHasVerticalScroller_(True)
+        scroll.setAutohidesScrollers_(True)
+        root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 1120))
+        scroll.setDocumentView_(root)
+        self.window.setContentView_(scroll)
         frame(label(root, "Choose the models that work beside you", size=21, bold=True), 24, 18, 860, 30)
         frame(
             label(
                 root,
-                "Quick and deep answers run independently. Screen OCR and context building use Astra low / Fast through Codex. API keys stay in Keychain.",
+                "Quick replies arrive while deeper work is planned. Scroll for planning and image models. API keys stay in Keychain.",
             ),
             24,
             52,
             868,
             36,
         )
-        for lane, x in [("quick", 24), ("deep", 474)]:
+        for lane, x, offset in [("quick", 24, 0), ("deep", 474, 0), ("planner", 24, 570), ("image", 474, 570)]:
             choice = getattr(controller.settings, lane)
-            frame(label(root, lane.capitalize() + " response", size=16, bold=True), x, 95, 400, 26)
+            title = {"planner": "Task planning and ongoing review", "image": "Generated images"}.get(lane, lane.capitalize() + " response")
+            frame(label(root, title, size=16, bold=True), x, 95 + offset, 420, 26)
             fields = {}
-            fields["provider"] = popup(root, PROVIDERS, choice.provider)
-            frame(fields["provider"], x, 125, 420, 28)
+            fields["provider"] = popup(root, ["openai", "compatible"] if lane == "image" else PROVIDERS, choice.provider)
+            frame(fields["provider"], x, 125 + offset, 420, 28)
             for key, title, value, y in [
                 ("model", "Model", choice.model, 160),
                 ("base_url", "Base URL", choice.base_url, 198),
@@ -54,6 +59,7 @@ class Preferences(NSObject):
                 ("max_tokens", "Token limit", str(choice.max_tokens), 274),
                 ("reasoning", "Reasoning", choice.reasoning, 312),
             ]:
+                y += offset
                 frame(label(root, title), x, y + 5, 86, 24)
                 fields[key] = field(root, value, "Provider default" if key == "base_url" else "", secure=key == "key")
                 frame(fields[key], x + 88, y, 332, 28)
@@ -61,12 +67,15 @@ class Preferences(NSObject):
                 root, "Send screenshot (vision required)", self, "noop:", checkbox=True
             )
             fields["images"].setState_(int(choice.send_images))
-            frame(fields["images"], x, 348, 290, 28)
+            frame(fields["images"], x, 348 + offset, 290, 28)
             fields["fast"] = button(root, "Codex Fast", self, "noop:", checkbox=True)
             fields["fast"].setState_(int(choice.fast_mode))
             fields["fast"].setEnabled_(choice.provider == "codex")
             fields["fast"].setToolTip_("Faster processing for compatible Codex models, using the higher Fast credit rate.")
-            frame(fields["fast"], x + 296, 348, 124, 28)
+            frame(fields["fast"], x + 296, 348 + offset, 124, 28)
+            if lane == "image":
+                for key in ("images", "fast", "max_tokens", "reasoning"):
+                    fields[key].setEnabled_(False)
             fields["provider"].setTarget_(self)
             fields["provider"].setAction_("providerChanged:")
             self.fields[lane] = fields
@@ -111,10 +120,13 @@ class Preferences(NSObject):
             "x,y,width,height — blank captures the primary screen",
         )
         frame(self.fields["screen_region"], 126, 575, 500, 28)
+        self.fields["system_audio_backend"] = popup(root, ["coreaudio", "screencapturekit"], s.system_audio_backend)
+        self.fields["system_audio_backend"].setToolTip_("Core Audio captures audio only (macOS 14.2+). Legacy ScreenCaptureKit opens a screen-capture stream.")
+        frame(self.fields["system_audio_backend"], 638, 575, 258, 28)
         frame(
             label(
                 root,
-                "Screen OCR repeats immediately after each result; project polling applies when screen capture is off. Local ASR may download weights. Audio roles are channel hints.",
+                "Core Audio records system sound without a screen stream. Audio roles are channel hints. Screen OCR repeats after each result.",
             ),
             24,
             613,
@@ -122,9 +134,10 @@ class Preferences(NSObject):
             34,
         )
         self.status = label(root, "")
-        frame(self.status, 24, 659, 635, 60)
-        frame(button(root, "Cancel", self, "cancel:"), 675, 678, 96, 32)
-        frame(button(root, "Save settings", self, "save:"), 781, 678, 114, 32)
+        frame(label(root, "Image generation uses the configured image API account. Text arrives while images render; unchanged designs reuse the existing image."), 24, 975, 868, 42)
+        frame(self.status, 24, 1040, 635, 60)
+        frame(button(root, "Cancel", self, "cancel:"), 675, 1060, 96, 32)
+        frame(button(root, "Save settings", self, "save:"), 781, 1060, 114, 32)
         self.window.center()
         return self
 
@@ -132,7 +145,7 @@ class Preferences(NSObject):
         pass
 
     def providerChanged_(self, sender):
-        for lane in ("quick", "deep"):
+        for lane in ("quick", "deep", "planner", "image"):
             fields = self.fields[lane]
             enabled = str(fields["provider"].titleOfSelectedItem()) == "codex"
             fields["fast"].setEnabled_(enabled)
@@ -146,7 +159,7 @@ class Preferences(NSObject):
         try:
             settings = self.controller.settings.model_copy(deep=True)
             credentials = []
-            for lane in ("quick", "deep"):
+            for lane in ("quick", "deep", "planner", "image"):
                 fields = self.fields[lane]
                 choice = ModelChoice(
                     provider=str(fields["provider"].titleOfSelectedItem()),
@@ -167,7 +180,7 @@ class Preferences(NSObject):
                     credentials.append((choice, lane, secret))
             for key in ("capture_screen", "microphone", "system_audio"):
                 setattr(settings, key, bool(self.fields[key].state()))
-            for key in ("microphone_role", "system_role", "transcription"):
+            for key in ("microphone_role", "system_role", "transcription", "system_audio_backend"):
                 setattr(settings, key, str(self.fields[key].titleOfSelectedItem()))
             settings.transcription_model = str(self.fields["transcription_model"].stringValue()).strip()
             for key in ("interval_seconds", "hourly_requests", "audio_chunk_seconds"):
@@ -184,6 +197,8 @@ class Preferences(NSObject):
             settings.configured = True
             if settings.quick.provider == settings.deep.provider == "disabled":
                 raise ValueError("Enable at least one response provider")
+            if settings.deep.provider != "disabled" and settings.planner.provider == "disabled":
+                raise ValueError("Enable a planning model for deep responses")
             settings = type(settings).model_validate(settings.model_dump())
             for choice, lane, secret in credentials:
                 self.controller.credentials.set(choice, lane, secret)

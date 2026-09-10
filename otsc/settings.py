@@ -83,12 +83,17 @@ class Settings(BaseModel):
             provider="codex", model="gpt-6-astra", reasoning="low", fast_mode=True, max_tokens=10000,
         )
     )
+    planner: ModelChoice = Field(default_factory=lambda: ModelChoice(
+        provider="codex", model="gpt-6-astra", reasoning="medium", fast_mode=True, max_tokens=10000,
+    ))
+    image: ModelChoice = Field(default_factory=lambda: ModelChoice(provider="openai", model="gpt-image-2.5-sunburst"))
     transcription: Literal["disabled", "local", "groq", "openai"] = "disabled"
     transcription_model: str = ""
     local_asr_model: str = "mlx-community/parakeet-tdt-0.6b-v3"
     capture_screen: bool = True
     microphone: bool = False
     system_audio: bool = False
+    system_audio_backend: Literal["coreaudio", "screencapturekit"] = "coreaudio"
     microphone_device: int | None = None
     microphone_role: Literal["primary_user", "other_people", "uncertain"] = "primary_user"
     system_role: Literal["primary_user", "other_people", "uncertain"] = "other_people"

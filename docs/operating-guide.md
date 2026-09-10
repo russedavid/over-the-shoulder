@@ -1,8 +1,16 @@
 # Operating and recovering a task
 
-Run `python ots.py`. Existing screen/audio controls, MIDI notes, copy behavior, pinning, and 5% click-through opacity remain available.
+Run `python ots.py`. Screen/audio controls, MIDI notes, copying, pinning, and click-through remain available. Click-through makes pane backgrounds at most 5% opaque while keeping the text opaque; it never fades the whole window. The decimal key, Cmd-Shift-I, or Dock icon restores interaction and normal backgrounds.
+
+For the Keychron MIDI keypad, use channel 1 and the [keypad layout](midi-keypad.txt). Turn the knob counterclockwise for Older or clockwise for Newer; Enter resumes Latest. Movement uses 8 up with 4/5/6 as left/down/right. Minus shrinks and plus enlarges. The decimal key toggles click-through, X toggles visibility, and 0 starts/finishes a voice question. The knob's press is reserved for the hardware keyboard/MIDI mode switch.
 
 Selecting an artifact or History holds the current output. Older/Newer browse the saved outputs without resuming live display. Latest returns to the newest result and resumes updates; Unpin does the same. The History dropdown selects an individual output and opens its artifacts. New capture, context updates, and answers continue while the pane is frozen. The recent timeline retains 24 outputs plus an older one you are holding. Checkpoints keep your browsing selection and the newest model context separately.
+
+Select **Plan** from the artifact dropdown to inspect the current approach, output sections, quality checks, and the reason the plan was kept or revised. Like other artifact selections, this freezes the view until Latest. Each deep update reassesses the plan against the task; small clarifications can reuse it. A task can introduce new section names and nested JSON without changing the app.
+
+Generated images appear after their accompanying text and have their own history entries. **Copy clean** copies the image, and Export saves PNG. Structured sections copy/export as JSON. Images fit the pane width; 7/9 page through tall images. If image generation fails, the section shows the error while the rest of the answer remains available. Planning and image providers are configurable by scrolling down in Settings. Generated PNGs are retained privately in the app's `generated-images` directory so saved proposals can refer to them; they are not raw screen captures.
+
+The default `coreaudio` system-audio backend records sound without opening a screen stream. It requires macOS 14.2+ and Terminal's audio permission. Use the explicit `screencapturekit` alternative only when needed; that legacy path can show a screen-sharing indicator. Ordinary screenshots remain one-shot. Capture is paused at launch.
 
 ## Task memory
 
@@ -44,6 +52,8 @@ python ots.py eval --live --inspection --limit 4 --output /tmp/otsc-inspection
 ```
 
 The first command validates the offline corpus without model calls. Live runs create private inputs/outputs, checks, critiques, manifests, and an HTML report. A matching saved judge reference check can be supplied with `--reference-check`. See `evals/protocol.md` for reference-label provenance and limitations.
+
+Current deep-text evals and recording replays include task planning and record the plan decision. They do not invoke the separate image renderer; manifests identify this limit, and image briefs alone do not count as successful drawings. The separate [task-planning development review](task-planning.md) includes actual image API generation/revisions and native image presentation checks.
 
 Use `--cases missing-02,bounds-01` for a targeted development run. After correcting an evaluator, `--replay /path/to/original-run --reference-check /path/to/judge-reference-check.json --output /path/to/new-run` rechecks recorded development responses without generating replacements. It retains previous judgments and refuses to overwrite the original or replay holdout cases. Semantic review may still call the configured reviewer.
 

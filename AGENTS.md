@@ -12,7 +12,13 @@ The primary user is trying to complete a task and create or change an artifact. 
 
 Use one task-centered interaction model. Coding, system design, diagrams, explanations, and suggested replies are output capabilities within it. A conversation-only response is valid when no artifact change is justified.
 
-Preserve MIDI control support. `otsc/midi.py` retains the original note numbers, debounce, and movement directions; README documents the unified behavior. The former mode-switch note changes output views, not task modes. Keep hide/show, resize, voice controls, and model/capture actions usable without clicking the overlay.
+Deep assistance must review the existing task plan before generating its named outputs. Reuse it for minor changes and revise it when the task/deliverable warrants a new approach or output schema. Preserve the decision reason in the Plan artifact. Section names and nested JSON schemas are task-defined, not a fixed mode catalog. New drawings use the configured image API and host-verified PNG assets; retain legacy SVG support for historical artifacts. Image completion must not mutate pinned history or roll live context back.
+
+Screen captures remain one-shot PyAutoGUI/Pillow operations. Default system audio uses an audio-only Core Audio tap, with ScreenCaptureKit available only as an explicitly selected legacy backend. Do not remove separate microphone/system channels to suppress a screen-sharing indicator. Announce any audible playback test before playing it; silent fixture transcription is preferred when testing the rest of the pipeline.
+
+Preserve MIDI keypad support using the channel-1 layout in README. The owner replaced the prototype bindings with notes 36–63: knob counterclockwise 36 browses Older, clockwise 37 browses Newer, and Enter 60 returns to Latest. Knob turns must not lose steps to button debouncing; other buttons retain per-note 150 ms duplicate protection. Pressing the knob switches keyboard/MIDI mode in the hardware and is not an application action. M1–M5 select output views, not task modes. Keep hide/show, resize, voice controls, and model/capture actions usable without clicking the overlay.
+
+Click-through makes pane backgrounds transparent (at most 5% opacity), while output text and diagram content stay opaque. Keep the window alpha at 1.0; do not fade the whole window. Restore normal backgrounds and controls when click-through is disabled or the Dock icon is used.
 
 Every generated code artifact needs line-by-line teaching annotations and a separate clean representation. Explanatory annotations must not be silently inserted into the user's code or diffs. Preserve comments that belong to the actual source.
 

@@ -68,7 +68,7 @@ class DiagramEdge(Record):
 
 class ArtifactContent(Record):
     id: str
-    kind: Literal["code", "patch", "diagram", "explanation", "checklist"]
+    kind: Literal["code", "patch", "diagram", "explanation", "checklist", "structured", "image"]
     title: str
     content: str
     language: str
@@ -121,6 +121,20 @@ class Artifact(ArtifactContent):
         return self.content
 
     def annotated_text(self) -> str:
+        if self.kind == "structured":
+            from otsc.planning import structured_text
+
+            try:
+                return structured_text(json.loads(self.content))
+            except (ValueError, RecursionError):
+                return self.content
+        if self.kind == "image":
+            try:
+                data = json.loads(self.content)
+                state = {"pending": "Generating image…", "ready": "Generated image", "failed": "Image generation failed"}.get(data.get("status"), "Image")
+                return "\n\n".join(str(value) for value in (state, data.get("caption"), data.get("error"), data.get("prompt")) if value)
+            except (ValueError, AttributeError):
+                return self.content
         notes = {a.line: a.explanation for a in self.annotations}
         if self.kind == "code":
             return "\n\n".join(
@@ -199,6 +213,7 @@ class Assistance(Record):
     open_questions: list[str]
     # Host diagnostics are not a model-output field and do not confer evidence authority.
     _delivery_notes: list[dict] = PrivateAttr(default_factory=list)
+    _task_plan: dict | None = PrivateAttr(default=None)
 
     def validate_sources(self, observations: list[Observation], verified_files: dict[str, str] | None = None):
         ids = {o.id for o in observations}

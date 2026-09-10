@@ -11,6 +11,7 @@ from evals.recording_data import read_json, write_json
 from otsc.context import ContextStore
 from otsc.context_builder import ContextBuilder
 from otsc.models import Record
+from otsc.planning import TaskPlanningProvider
 from otsc.privacy import redact
 from otsc.providers import provider_for
 from otsc.scheduler import Cancellation, Coordinator
@@ -162,6 +163,8 @@ def replay_session(directory, session_id):
     class CaptureProvider:
         def __init__(self, lane):
             self.base = provider_for(getattr(settings, lane), Credentials())
+            if lane == "deep":
+                self.base = TaskPlanningProvider(self.base, provider_for(settings.planner, Credentials()))
             self.choice = self.base.choice
 
         def generate(self, snapshot, lane, token, progress):
@@ -171,6 +174,8 @@ def replay_session(directory, session_id):
                 captured[(digest(snapshot.prompt_context()), lane)] = {
                     "structured": self.base.last_raw_response,
                     "text": self.base.last_raw_text,
+                    "plan_decision": getattr(self.base, "last_decision", None),
+                    "named_outputs": getattr(self.base, "last_outputs", None),
                 }
 
     # Do not leak the reference task label, old saved answers, or a present-day goal.
@@ -179,7 +184,8 @@ def replay_session(directory, session_id):
     result = {
         "session_id": session_id,
         "release": release_manifest(),
-        "models": {lane: getattr(settings, lane).model_dump() for lane in ("quick", "deep", "ocr", "context_builder")},
+        "models": {lane: getattr(settings, lane).model_dump() for lane in ("quick", "deep", "ocr", "context_builder", "planner", "image")},
+        "image_generation_exercised": False,
         "current_runtime": [
             "ScreenCapture.interpret",
             "read_screen (Astra OCR)",
@@ -188,6 +194,7 @@ def replay_session(directory, session_id):
             "Coordinator",
             "ContextBuilder",
             "provider_for",
+            "TaskPlanningProvider (image briefs only; PNG rendering is a separate stage)",
         ],
         "historical_answers_supplied": False,
         "reference_answers_supplied": False,

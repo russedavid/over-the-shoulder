@@ -5,17 +5,21 @@ import objc
 from Foundation import NSMakeRect
 
 
-def color(hex_value):
+def color(hex_value, *, alpha=1.0):
     value = hex_value.lstrip("#")
     return A.NSColor.colorWithCalibratedRed_green_blue_alpha_(
-        int(value[:2], 16) / 255, int(value[2:4], 16) / 255, int(value[4:6], 16) / 255, 1
+        int(value[:2], 16) / 255, int(value[2:4], 16) / 255, int(value[4:6], 16) / 255, alpha
     )
 
 
 class FlippedView(A.NSView):
     def drawRect_(self, rect):
-        color("f8f4ec").setFill()
-        A.NSRectFill(self.bounds())
+        color("f8f4ec", alpha=getattr(self, "background_alpha", 1.0)).setFill()
+        # Replace the backing pixels; repeated redraws must not accumulate opacity.
+        A.NSRectFillUsingOperation(self.bounds(), A.NSCompositingOperationCopy)
+
+    def isOpaque(self):
+        return getattr(self, "background_alpha", 1.0) >= 1.0
 
     def isFlipped(self):
         return True
@@ -115,3 +119,58 @@ def retain_text(view, text):
     if scroll and position:
         scroll.contentView().scrollToPoint_(position)
         scroll.reflectScrolledClipView_(scroll.contentView())
+
+
+def set_overlay_appearance(window, root, enabled, *, panes, fields=(), buttons=(), canvases=()):
+    """Make the backgrounds transparent without fading text or replacing views."""
+    saved = getattr(root, "overlay_restore", None)
+    if enabled and saved is None:
+        changes = []
+
+        def change(obj, getter, setter, value):
+            changes.append((getattr(obj, setter), getattr(obj, getter)(), value))
+
+        change(window, "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+        change(window, "isOpaque", "setOpaque_", False)
+        change(window, "hasShadow", "setHasShadow_", False)
+        change(window, "titlebarAppearsTransparent", "setTitlebarAppearsTransparent_", True)
+        for scroll, text in panes:
+            change(scroll, "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+            change(scroll, "drawsBackground", "setDrawsBackground_", False)
+            change(scroll, "borderType", "setBorderType_", A.NSNoBorder)
+            change(scroll, "scrollerStyle", "setScrollerStyle_", A.NSScrollerStyleOverlay)
+            change(scroll.contentView(), "drawsBackground", "setDrawsBackground_", False)
+            change(scroll.contentView(), "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+            if text is not None:
+                change(text, "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+                change(text, "drawsBackground", "setDrawsBackground_", False)
+        for field in fields:
+            change(field, "isBordered", "setBordered_", False)
+            change(field, "isBezeled", "setBezeled_", False)
+            change(field, "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+            change(field, "drawsBackground", "setDrawsBackground_", False)
+            editor = field.currentEditor()
+            if editor is not None:
+                change(editor, "backgroundColor", "setBackgroundColor_", A.NSColor.clearColor())
+                change(editor, "drawsBackground", "setDrawsBackground_", False)
+        for button in buttons:
+            change(button, "isBordered", "setBordered_", False)
+        alphas = [(view, getattr(view, "background_alpha", 1.0)) for view in (root, *canvases)]
+        root.overlay_restore = (changes, alphas)
+        for setter, _, value in changes:
+            setter(value)
+        root.background_alpha = 0.05
+        for canvas in canvases:
+            canvas.background_alpha = 0.0
+    elif not enabled and saved is not None:
+        changes, alphas = saved
+        for setter, old, _ in reversed(changes):
+            setter(old)
+        for view, alpha in alphas:
+            view.background_alpha = alpha
+        root.overlay_restore = None
+    # A window alpha multiplies every child, including its text. Keep it at one.
+    window.setAlphaValue_(1.0)
+    window.setIgnoresMouseEvents_(enabled)
+    for view in (root, *canvases):
+        view.setNeedsDisplay_(True)

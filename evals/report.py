@@ -32,6 +32,9 @@ def write_report(run, directory):
                 "inspection_trace",
                 "error",
                 "raw_response",
+                "plan_decision",
+                "named_outputs",
+                "image_generation_exercised",
             )
         }
         rows.append(

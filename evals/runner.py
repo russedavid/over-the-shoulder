@@ -13,10 +13,11 @@ from evals.judge import SYSTEM as JUDGE_SYSTEM
 from evals.judge import review
 from evals.report import write_report
 from otsc.inspection import InspectionProvider
+from otsc.planning import TaskPlanningProvider
 from otsc.privacy import app_directory, atomic_private_write
 from otsc.providers import provider_for
 from otsc.scheduler import Cancellation
-from otsc.settings import Credentials, ModelChoice
+from otsc.settings import Credentials, ModelChoice, load_settings
 from otsc.telemetry import Progress, TraceStore, digest, release_manifest
 
 
@@ -52,6 +53,9 @@ def run_case(item, choice, judge_choice, inspection, directory, reference_eligib
     trace = TraceStore(directory / "traces", source="evaluation")
     progress = Progress(lambda text: None, trace, request_id=item["id"], session_id=snapshot.session_id, lane="deep")
     base = provider_for(choice, Credentials())
+    planner_choice = load_settings().planner
+    if hasattr(base, "generate_json"):
+        base = TaskPlanningProvider(base, provider_for(planner_choice, Credentials()))
     provider = InspectionProvider(base) if inspection else base
     record = {
         "case_id": item["id"],
@@ -65,12 +69,16 @@ def run_case(item, choice, judge_choice, inspection, directory, reference_eligib
         "review": None,
         "task_passed": None,
         "error": None,
+        "planner": planner_choice.model_dump(),
+        "image_generation_exercised": False,
     }
     phase = "generation"
     try:
         response = provider.generate(snapshot, "deep", Cancellation(), progress)
         record["generation_seconds"] = round(time.monotonic() - started, 3)
         record["response"] = response.model_dump()
+        record["plan_decision"] = getattr(base, "last_decision", None)
+        record["named_outputs"] = getattr(base, "last_outputs", None)
         phase = "deterministic_checks"
         record["checks"] = task_checks(item, response, snapshot)
         if judge_choice and not any(c["passed"] is False for c in record["checks"]):

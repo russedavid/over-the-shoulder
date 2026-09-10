@@ -1,4 +1,4 @@
-# Implementation status — September 9, 2026
+# Implementation status — September 10, 2026
 
 The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-overhaul source remains in Git history. The old mode-specific entry points, prompts, static personal/interview material, and fixed-column renderers were retired; `test.py` and `lib/main.py` are import-safe compatibility launchers.
 
@@ -8,7 +8,9 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 |---|---|
 | Window, task controls, retained output, automatic cadence | `otsc/app.py`, `otsc/native.py` |
 | Startup configuration and Keychain credentials | `otsc/preferences.py`, `otsc/settings.py` |
-| One response schema and task instructions | `otsc/models.py`, `otsc/prompts.py` |
+| Task-specific planning, ongoing plan review, dynamic output contracts | `otsc/planning.py` |
+| Shared storage envelope and quick-response instructions | `otsc/models.py`, `otsc/prompts.py` |
+| Generated PNGs, image revisions, bounded rendering worker | `otsc/images.py` |
 | Independent component validation and bounded annotation repair | `otsc/delivery.py` |
 | Five-minute observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
 | Full-resolution Astra low/Fast screen reading | `otsc/perception.py` |
@@ -18,9 +20,9 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Streaming HTTP providers | `otsc/providers.py` |
 | Existing Codex CLI integration | `otsc/codex.py` |
 | Read-only project selection and host-calculated diffs | `otsc/workspace.py` |
-| Screen OCR, vision frames, microphone/system audio, ASR | `otsc/capture.py` |
-| Native diagrams and SVG | `otsc/diagram.py` |
-| Original MIDI bindings and controller reconnection | `otsc/midi.py` |
+| Screen OCR, vision frames, microphone/system audio, ASR | `otsc/capture.py`, `otsc/audio_tap.py` |
+| Legacy native diagrams and SVG | `otsc/diagram.py` |
+| Channel-1 keypad bindings and controller reconnection | `otsc/midi.py` |
 | Synthetic interaction replay | `otsc/demo.py` |
 | Explicit task details and private, opt-in checkpoints | `otsc/task_details.py`, `otsc/sessions.py` |
 | Optional bounded model-directed snapshot inspection | `otsc/inspection.py` |
@@ -33,13 +35,15 @@ The Codex adapter disables model-visible shell/executor, browser, image-read, ap
 
 ## Capture and bounded work
 
+Click-through now follows the prototype's background-only transparency: window alpha remains 1.0, the window background is clear, the root backdrop is 5% opaque, and text/scroll-view backgrounds and control bezels are removed temporarily. Text and diagram content retain their normal opacity. Toggling off or using the Dock icon restores the original appearance without replacing text or artifacts. Native tests inspect rendered background/text alpha and cover diagram transparency and Dock restoration. This corrects the earlier whole-window 5% fade, which incorrectly faded the output text too.
+
 Screen capture uses PyAutoGUI, a local Tesseract redaction pass, and full-resolution Astra low/Fast visual reading. Tesseract text is not used as task OCR. Window sharing starts off (`NSWindowSharingNone`), with no capture hide/show or artificial wait. The Sharing button can enable sharing; only then does a visible window hide with a 10 ms preparation delay. The screenshot-completion callback dispatches restoration directly to AppKit before OCR, without waiting for the 100 ms event poll. Failure and cancellation also restore the window, while explicit user hiding is respected. A completed reading schedules the next fresh screenshot immediately during following. The most recent 12 redacted frames are retained during the session and removed on normal exit; abrupt termination may leave temporary files. Errors back off and Pause cancels in-flight work.
 
-Microphone capture uses sounddevice; system audio uses ScreenCaptureKit and excludes the current process's audio. Channels are transcribed separately in bounded worker queues. Transcription can use a local MLX recognizer or configured Groq/OpenAI ASR. Temporary audio is removed after local transcription; cloud ASR uses an in-memory WAV. The system does not claim biometric identification, individual diarization of every remote participant, or echo cancellation.
+Microphone capture uses sounddevice; system audio now defaults to an audio-only Core Audio process tap with a private aggregate, native PCM decoding, and resampling to 16 kHz mono. It does not create a screen/display stream. ScreenCaptureKit remains an explicitly selected legacy backend. Channels are transcribed separately in bounded worker queues. Transcription can use a local MLX recognizer or configured Groq/OpenAI ASR. Temporary audio is removed after local transcription; cloud ASR uses an in-memory WAV. The system does not claim biometric identification, individual diarization of every remote participant, or echo cancellation.
 
 Context retains five minutes of screen/audio observations (up to 1,000 entries), typed context, source evidence for accumulated memory, observed fragments, prior answers/artifacts, unresolved questions, and at most 30 filtered source files / 180 KB in the selected project snapshot. The source-text snapshot budget is 800 KB with explicit omitted IDs; the former 24 KB budget is gone. A separate bounded context worker maintains up to 80 source-linked notes while two fixed answer workers consume immutable snapshots. New passive evidence enters immediately without invalidating an in-flight answer. Explicit task/project edits and newer requests still supersede old work. Long-running Codex work has a 240-second deadline.
 
-The suite now has 99 passing tests. Native checks additionally cover artifact/history selection, frozen output while a new valid answer arrives, Older/Newer/Latest controls, and restoring an older selection without rolling model context back. The [continuous workflow report](continuous-context.md) records the capture/context changes and finite live design/revision run. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
+The [task-planning report](task-planning.md) records dynamic output contracts, ongoing plan-fit decisions, generated images, and the audio-only capture migration. Its live examples include plan reuse, a coding-to-design pivot, and an unfamiliar nested JSON deliverable. Native checks cover PNG/JSON presentation, frozen image completion, resize/scroll, the channel-1 keypad, Older/Newer/Latest controls, and checkpoint restoration without rolling live memory back. The earlier [continuous workflow report](continuous-context.md) records the capture/context changes. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
 
 ## What has been verified
 
@@ -71,7 +75,7 @@ The current local preferences use Codex Spark at low reasoning and GPT-6 Astra a
 
 After the 0.2 additions, the explicitly rendered-fixture live test passed with quick/deep output at 5.7/15.3 seconds. It used real OCR, local ASR, vision and Codex calls, and native rendering; desktop capture was marked false because macOS reported no active display. The earlier hardware and active-display checks above remain distinct evidence.
 
-MIDI support has been restored from the baseline mappings. CoreMIDI delivery was verified with a virtual destination; no physical controller was connected during that check. Tests cover note filtering, debounce, disconnect/reconnect, and shutdown. Native window checks cover MIDI movement, resize, and hide/show without discarding content. Standalone voice completion stops hardware capture before waiting for transcription.
+MIDI was initially restored from the baseline mappings, then remapped to the owner's Keychron K0 Max layout. Channel-1 notes 36/37 turn backward/forward through output history without debounce, and Enter 60 returns to live output. The 8/4/5/6 arrow cluster moves the window, -/+ resize it, and M1–M5 select views. Tests exercise the note-to-handler path, rapid knob turns, channel filtering, bounds, reconnection and shutdown. Native smoke checks inject those MIDI messages through the receiver and AppKit controller without opening capture hardware or calling live models. The keypad's input port was detected; these software checks do not certify a physical press of every key. Standalone voice completion still stops hardware capture before waiting for transcription.
 
 ## Practical limits
 
@@ -89,3 +93,5 @@ No public portfolio release or push was performed. Clean publication of the old 
 - [Anthropic Messages](https://platform.claude.com/docs/en/api/messages/create)
 - [Groq API reference](https://console.groq.com/docs/api-reference)
 - [Apple ScreenCaptureKit](https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos)
+- [Apple Core Audio process taps](https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps)
+- [OpenAI image generation and editing](https://developers.openai.com/api/docs/guides/image-generation)
