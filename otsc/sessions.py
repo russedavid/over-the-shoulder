@@ -10,6 +10,7 @@ from pydantic import Field
 
 from otsc.context import ContextStore
 from otsc.models import Artifact, Assistance, ContextItem, Observation, ObservedFile, Record, safe_relative_path
+from otsc.output_browser import BrowserState
 from otsc.output_history import MAX_OUTPUTS, OutputSnapshot
 from otsc.privacy import app_directory, atomic_private_write, redact
 
@@ -48,9 +49,12 @@ class SessionDocument(Record):
     artifact_bases: dict[str, dict[str, str]] = Field(default_factory=dict)
     outputs: list[OutputSnapshot] = Field(default_factory=list, max_length=MAX_OUTPUTS + 1)
     selected_output_id: str | None = None
+    output_browser: BrowserState | None = None
+    debug_mode: bool = False
 
 
-def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", selected_view="Artifact", output_history=None):
+def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", selected_view="Artifact", output_history=None,
+               output_browser=None, debug_mode=False):
     with context._lock:
         observations = [o.model_copy(update={"image_path": ""}, deep=True) for o in context.observations]
         state = ContextCheckpoint(
@@ -78,11 +82,13 @@ def checkpoint(context, coordinator, *, displayed_artifacts=(), selected_id="", 
             displayed_artifacts=list(displayed_artifacts),
             selected_id=selected_id,
             selected_view=selected_view,
-            pinned=output_history.frozen if output_history is not None else coordinator.pinned,
+            pinned=output_browser.frozen if output_browser is not None else output_history.frozen if output_history is not None else coordinator.pinned,
             base_hashes={},
             artifact_bases=getattr(coordinator, "artifact_bases", {}),
             outputs=output_history.entries if output_history is not None else [],
             selected_output_id=output_history.selected_id if output_history is not None else None,
+            output_browser=output_browser.state.model_copy(deep=True) if output_browser is not None else None,
+            debug_mode=debug_mode,
         )
 
 
@@ -132,8 +138,10 @@ def load_session(path):
         ):
             raise ValueError("Session contains an invalid proposal base")
     # Paths in an imported file are data, never permission to open a local image.
+    browser_sources = [o for stream in document.output_browser.types.values() for version in stream.versions
+                       for o in version.sources] if document.output_browser else []
     for observation in [*document.context.observations, *document.context.retained_sources,
-                        *(o for output in document.outputs for o in output.sources)]:
+                        *(o for output in document.outputs for o in output.sources), *browser_sources]:
         observation.image_path = ""
         observation.text = redact(observation.text)
     if not isinstance(json.loads(document.context.previous_answer), dict):

@@ -342,7 +342,7 @@ class ContinuousControllerTests(unittest.TestCase):
             capture_token=None, capture_failures=0, next_capture=0, manual_help_pending=False, voice_recording=False,
             context_build_pending=False, auto_help_pending=False, overlay_hidden=False, next_answer_attempt=0,
             window_sharing=False, capture_hidden_for="", capture_frame_pending=False, controls={"sharing": Mock()},
-            trace=SimpleNamespace(record=lambda *a, **kw: None), refresh_body=lambda: None,
+            trace=SimpleNamespace(record=lambda *a, **kw: None), refresh_body=lambda: None, update_activity=lambda: None,
             refresh_passive_views=lambda: None,
             checkpoint_if_enabled=lambda: None,
         )

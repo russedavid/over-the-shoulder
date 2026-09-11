@@ -31,6 +31,55 @@ class FlippedView(A.NSView):
             owner.relayout()
 
 
+class OutputTypeButton(A.NSButton):
+    """A persistent native selector row with an opaque unread-count badge."""
+
+    def isFlipped(self):
+        return True
+
+    def isOpaque(self):
+        return False
+
+    def drawRect_(self, rect):
+        overlay = bool(self.window() and self.window().ignoresMouseEvents())
+        (A.NSColor.clearColor() if overlay else color("f8f4ec")).setFill()
+        A.NSRectFillUsingOperation(self.bounds(), A.NSCompositingOperationCopy)
+        width, height = self.bounds().size
+        selected = bool(getattr(self, "output_selected", False))
+        if selected:
+            alpha = .05 if overlay else 1.0
+            color("e8d8c1", alpha=alpha).setFill()
+            A.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(NSMakeRect(1, 1, width - 2, height - 2), 7, 7).fill()
+            color("8b6544").setFill()
+            A.NSRectFill(NSMakeRect(2, 8, 3, height - 16))
+        count = getattr(self, "newer_count", 0)
+        badge = str(count) if count < 100 else "99+"
+        badge_width = max(24, 10 + 8 * len(badge)) if count else 0
+        paragraph = A.NSMutableParagraphStyle.alloc().init()
+        paragraph.setLineBreakMode_(A.NSLineBreakByTruncatingTail)
+        attrs = {A.NSFontAttributeName: A.NSFont.boldSystemFontOfSize_(13) if selected else A.NSFont.systemFontOfSize_(13),
+                 A.NSForegroundColorAttributeName: color("30291f"), A.NSParagraphStyleAttributeName: paragraph}
+        heading = getattr(self, "output_heading", str(self.title()))
+        subtitle = getattr(self, "output_subtitle", "")
+        text_width = width - 24 - (badge_width + 6 if count else 0)
+        A.NSString.stringWithString_(heading).drawInRect_withAttributes_(
+            NSMakeRect(12, 5 if subtitle else 11, text_width, 20), attrs)
+        if subtitle:
+            A.NSString.stringWithString_(subtitle).drawInRect_withAttributes_(
+                NSMakeRect(12, 24, text_width, 16),
+                {**attrs, A.NSFontAttributeName: A.NSFont.systemFontOfSize_(11), A.NSForegroundColorAttributeName: color("6d5947")})
+        if count:
+            box = NSMakeRect(width - badge_width - 8, (height - 24) / 2, badge_width, 24)
+            color("bc3731").setFill()
+            A.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(box, 12, 12).fill()
+            paragraph = A.NSMutableParagraphStyle.alloc().init()
+            paragraph.setAlignment_(A.NSTextAlignmentCenter)
+            A.NSString.stringWithString_(badge).drawInRect_withAttributes_(
+                NSMakeRect(box.origin.x, box.origin.y + 4, badge_width, 18),
+                {A.NSFontAttributeName: A.NSFont.boldSystemFontOfSize_(12), A.NSForegroundColorAttributeName: A.NSColor.whiteColor(),
+                 A.NSParagraphStyleAttributeName: paragraph})
+
+
 def label(parent, text, *, size=13, bold=False):
     view = A.NSTextField.wrappingLabelWithString_(text)
     view.setFont_(A.NSFont.boldSystemFontOfSize_(size) if bold else A.NSFont.systemFontOfSize_(size))

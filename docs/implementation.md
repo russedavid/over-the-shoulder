@@ -1,4 +1,4 @@
-# Implementation status — September 10, 2026
+# Implementation status — September 11, 2026
 
 The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-overhaul source remains in Git history. The old mode-specific entry points, prompts, static personal/interview material, and fixed-column renderers were retired; `test.py` and `lib/main.py` are import-safe compatibility launchers.
 
@@ -15,7 +15,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Five-minute observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
 | Full-resolution Astra low/Fast screen reading | `otsc/perception.py` |
 | Background source-linked memory and observed workspace updates | `otsc/context_builder.py` |
-| Frozen output snapshots and Older/Newer/Latest navigation | `otsc/output_history.py` |
+| Per-type history, cursors, badges, and raw output log | `otsc/output_browser.py`, `otsc/output_history.py` |
 | Two bounded response workers and revision checks | `otsc/scheduler.py` |
 | Streaming HTTP providers | `otsc/providers.py` |
 | Existing Codex CLI integration | `otsc/codex.py` |
@@ -23,7 +23,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Screen OCR, vision frames, microphone/system audio, ASR | `otsc/capture.py`, `otsc/audio_tap.py` |
 | Legacy native diagrams and SVG | `otsc/diagram.py` |
 | Channel-1 keypad bindings and controller reconnection | `otsc/midi.py` |
-| Synthetic interaction replay | `otsc/demo.py` |
+| Synthetic interaction replay and native UI checks | `otsc/demo.py`, `otsc/native_smoke.py` |
 | Explicit task details and private, opt-in checkpoints | `otsc/task_details.py`, `otsc/sessions.py` |
 | Optional bounded model-directed snapshot inspection | `otsc/inspection.py` |
 | Operational metadata, recovery checks, source review export | `otsc/telemetry.py`, `otsc/operations.py`, `otsc/release.py` |
@@ -46,6 +46,8 @@ Context retains five minutes of screen/audio observations (up to 1,000 entries),
 The [task-planning report](task-planning.md) records dynamic output contracts, ongoing plan-fit decisions, generated images, and the audio-only capture migration. Its live examples include plan reuse, a coding-to-design pivot, and an unfamiliar nested JSON deliverable. Native checks cover PNG/JSON presentation, frozen image completion, resize/scroll, the channel-1 keypad, Older/Newer/Latest controls, and checkpoint restoration without rolling live memory back. The earlier [continuous workflow report](continuous-context.md) records the capture/context changes. Later sections below preserve earlier checks and their original models and limits; they are not reruns of the new architecture.
 
 The later [automatic refresh change](automatic-refresh.md) suppresses answer generation when new OCR/audio evidence adds nothing substantive. Memory-only revisions do not trigger a review; the existing planner can retain the prior answer, and a final content comparison prevents citation/Plan-metadata churn from creating duplicate history. Explicit Help now bypasses this gate. Seven live synthetic judgment checks covered both harmless repetition and consequential small changes.
+
+The September 11 [output-navigation change](output-navigation.md) makes actionable output the default, replaces dropdowns with a persistent highlighted type list, and adds per-type histories and red newer-version badges. Debug reveals internal planning/context/events. A changed explanation or completed image no longer advances code history. The 155-test suite and native preservation checks pass.
 
 ## What has been verified
 

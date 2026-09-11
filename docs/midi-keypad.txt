@@ -7,10 +7,10 @@ MIDI channel 1. Bracketed numbers are MIDI note numbers.
 | Press: MIDI/keys  |                 |                 |                 |                 |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M1 [42]           | Num/Clear [43]  | / [44]          | * [45]          | - [46]          |
-| Artifact          | New task        | Prev artifact   | Next artifact   | Smaller         |
+| Outputs           | New task        | Prev type       | Next type       | Smaller         |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M2 [47]           | 7 [48]          | 8 [49]          | 9 [50]          | + [51]          |
-| Conversation      | Page up         | Move up         | Page down       | Bigger          |
+| Replies           | Page up         | Move up         | Page down       | Bigger          |
 +-------------------+-----------------+-----------------+-----------------+                 |
 | M3 [52]           | 4 [53]          | 5 [54]          | 6 [55]          |                 |
 | Context           | Move left       | Move down       | Move right      |                 |
@@ -19,11 +19,13 @@ MIDI channel 1. Bracketed numbers are MIDI note numbers.
 | Observed files    | Copy clean      | Center window   | Capture now     | Latest / live   |
 +-------------------+-----------------------------------+-----------------+                 |
 | M5 [61]           | 0 [62]                            | . [63]          |                 |
-| History           | Voice start/stop                  | Click-through   |                 |
+| Debug events      | Voice start/stop                  | Click-through   |                 |
 +-------------------+-----------------------------------+-----------------+-----------------+
 
-Knob turns and artifact/page navigation freeze the output.
-Enter returns to the latest output and resumes live updates.
+Knob turns browse only the selected type’s history. / and * switch types.
+Type selection and page navigation hold the current version.
+Enter resumes the latest version of the selected type only.
+M3/M4/M5 enter Debug; M1/M2 return to actionable output.
 Movement is 50 pixels per press. +/- resize both dimensions by 50 pixels.
 Click-through uses at most 5% background opacity; output text stays opaque.
 0 finishes recording and requests help on the second press.

@@ -22,6 +22,7 @@ from otsc.images import ImageCoordinator, image_path, resolve_image, update_imag
 from otsc.midi import MidiInput
 from otsc.native import (
     FlippedView,
+    OutputTypeButton,
     button,
     color,
     field,
@@ -32,11 +33,22 @@ from otsc.native import (
     scroll_text,
     set_overlay_appearance,
 )
+from otsc.output_browser import (
+    CONTEXT,
+    DETAILS,
+    EVENTS,
+    FILES,
+    GUIDANCE,
+    LIVE_DEBUG,
+    REPLIES,
+    OutputBrowser,
+    artifact_key,
+)
 from otsc.output_history import OutputHistory
 from otsc.perception import read_screen
 from otsc.planning import TaskPlanningProvider
 from otsc.preferences import Preferences
-from otsc.privacy import private_directory, private_write, redact
+from otsc.privacy import private_write, redact
 from otsc.providers import provider_for
 from otsc.scheduler import Cancellation, Cancelled, Coordinator
 from otsc.sessions import checkpoint, load_session, restore_context, save_session
@@ -121,6 +133,11 @@ class Controller(NSObject):
             self.context, self.get_provider, hourly_limit=self.settings.hourly_requests, trace=self.trace
         )
         self.output_history = OutputHistory()
+        self.browser = OutputBrowser()
+        self.debug_mode = False
+        self.composer_open = False
+        self.notice_text = ""
+        self.type_buttons = {}
         self.image_worker = ImageCoordinator(self.events, lambda: self.settings.image, self.credentials, trace=self.trace)
         self.history_choices = []
         self.context_builder = ContextBuilder(self.context, lambda: self.get_provider("context_builder"), trace=self.trace)
@@ -173,6 +190,8 @@ class Controller(NSObject):
             self.coordinator.request(manual=True)
         elif self.settings_error:
             self.status.setStringValue_(self.settings_error)
+            self.notice_text = self.settings_error
+            self.relayout()
         if not options.smoke_test:
             self.window.makeKeyAndOrderFront_(None)
             A.NSApp.activateIgnoringOtherApps_(True)
@@ -212,16 +231,12 @@ class Controller(NSObject):
         # Start with the prototype's exclusion from PyAutoGUI/Pillow capture.
         self.window.setSharingType_(A.NSWindowSharingNone)
         self.window.setReleasedWhenClosed_(False)
-        self.window.setMinSize_((820, 650))
+        self.window.setMinSize_((760, 520))
         self.window.setDelegate_(self)
         self.window.setBackgroundColor_(color("f8f4ec"))
         self.window.setLevel_(A.NSFloatingWindowLevel)
         self.root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, w, h))
         self.window.setContentView_(self.root)
-        self.title = label(self.root, "Over The Shoulder Coder", size=22, bold=True)
-        self.subtitle = label(
-            self.root, "Code, design, and explanations informed by your screen and conversation.", size=12
-        )
         self.controls = {}
         for name, title, action in [
             ("help", "Help now", "helpNow:"),
@@ -231,8 +246,10 @@ class Controller(NSObject):
             ("project", "Project…", "selectProject:"),
             ("new", "New task", "newTask:"),
             ("sharing", "Sharing: Off", "toggleSharing:"),
+            ("task", "Task…", "toggleComposer:"),
+            ("debug", "Debug", "toggleDebug:"),
         ]:
-            self.controls[name] = button(self.root, title, self, action)
+            self.controls[name] = button(self.root, title, self, action, checkbox=name == "debug")
         self.controls["sharing"].setToolTip_(
             "Off: visible to you, excluded from this app's screenshots. On: allow sharing; hide briefly for this app's captures. Starts Off each launch."
         )
@@ -246,27 +263,28 @@ class Controller(NSObject):
         self.source = popup(self.root, ["You", "Other person", "Uncertain speaker", "Screen / code"], "You")
         self.input_scroll, self.input = scroll_text(self.root, editable=True)
         self.add_button = button(self.root, "Add context", self, "addContext:")
-        self.summary_scroll, self.summary = scroll_text(self.root)
-        retain_text(
-            self.summary, "Ready when you are. Add context, capture the current work, or start following your task."
-        )
-        self.view = popup(
-            self.root,
-            ["Artifact", "Conversation", "Context", "Observed files", "History"],
-            "Artifact",
-            self,
-            "changeView:",
-        )
-        self.artifacts = popup(self.root, ["No artifact yet"], target=self, action="chooseArtifact:")
+        self.types_label = label(self.root, "Outputs", size=13, bold=True)
+        self.types_scroll = A.NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 400))
+        self.types_scroll.setHasVerticalScroller_(True)
+        self.types_scroll.setAutohidesScrollers_(True)
+        self.types_scroll.setDrawsBackground_(False)
+        self.types_canvas = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 400))
+        self.types_scroll.setDocumentView_(self.types_canvas)
+        self.root.addSubview_(self.types_scroll)
+        self.output_title = label(self.root, "Ready", size=17, bold=True)
+        self.version_label = label(self.root, "", size=12)
+        self.activity = label(self.root, "Paused", size=12)
+        self.notice_label = label(self.root, "", size=12)
+        self.notice_label.setTextColor_(color("a12d29"))
         self.annotation = button(self.root, "Explain each line", self, "changeView:", checkbox=True)
         self.annotation.setState_(1)
         self.pin = button(self.root, "Pin", self, "togglePin:")
         self.older = button(self.root, "Older", self, "olderOutput:")
         self.newer = button(self.root, "Newer", self, "newerOutput:")
         self.latest = button(self.root, "Latest", self, "latestOutput:")
-        self.older.setToolTip_("Show the previous output and freeze the pane.")
-        self.newer.setToolTip_("Show the next output; keep the pane frozen.")
-        self.latest.setToolTip_("Jump to the newest output and resume live updates.")
+        self.older.setToolTip_("Previous version of the selected output type.")
+        self.newer.setToolTip_("Next version of the selected output type; keep it held.")
+        self.latest.setToolTip_("Show the latest version and resume updates for this type.")
         self.copy = button(self.root, "Copy clean", self, "copyClean:")
         self.copy_notes = button(self.root, "Copy explained", self, "copyExplained:")
         self.export = button(self.root, "Export…", self, "exportArtifact:")
@@ -296,6 +314,7 @@ class Controller(NSObject):
         )
         self.root.layout_owner = self
         self.relayout()
+        self.render_response()
         self.update_navigation_controls()
 
     @objc.python_method
@@ -307,6 +326,7 @@ class Controller(NSObject):
             ("Help now", "helpNow:", "\r"),
             ("Settings…", "settings:", ","),
             ("Toggle click-through", "toggleClickThrough:", "i"),
+            ("Toggle debug view", "toggleDebug:", "d"),
             ("Hide / show window", "toggleVisibility:", ""),
             ("New task", "newTask:", "n"),
             ("Task details…", "taskDetails:", ""),
@@ -331,7 +351,7 @@ class Controller(NSObject):
             if action == "toggleInspection:":
                 item.setState_(int(self.settings.inspection_enabled))
                 self.inspection_menu_item = item
-            if action == "toggleClickThrough:":
+            if action in {"toggleClickThrough:", "toggleDebug:"}:
                 item.setKeyEquivalentModifierMask_(A.NSEventModifierFlagCommand | A.NSEventModifierFlagShift)
             submenu.addItem_(item)
         app_item.setSubmenu_(submenu)
@@ -355,31 +375,35 @@ class Controller(NSObject):
         if not hasattr(self, "status"):
             return
         w, h = self.root.bounds().size
-        frame(self.title, 20, 15, w - 40, 30)
-        frame(self.subtitle, 20, 47, w - 40, 24)
-        x = 16
-        for name, width in [
-            ("help", 104),
-            ("capture", 112),
-            ("start", 136),
-            ("project", 105),
-            ("settings", 94),
-            ("new", 94),
-            ("sharing", 112),
-        ]:
-            frame(self.controls[name], x, 77, width, 32)
-            x += width + 5
-        frame(self.goal, 20, 118, w - 40, 30)
-        frame(self.source, 18, 160, 160, 30)
-        frame(self.add_button, 20, 194, 156, 30)
-        frame(self.input_scroll, 187, 159, w - 207, 68)
-        frame(self.summary_scroll, 20, 240, w - 40, 95)
-        frame(self.view, 18, 346, 158, 30)
-        frame(self.artifacts, 187, 346, w - 407, 30)
-        frame(self.annotation, w - 212, 347, 195, 28)
-        frame(self.body_scroll, 20, 388, w - 40, h - 485)
-        frame(self.graph_scroll, 20, 388, w - 40, h - 485)
-        frame(self.image_scroll, 20, 388, w - 40, h - 485)
+        x = 12
+        for name, width in [("help", 88), ("start", 130), ("capture", 100), ("task", 72), ("new", 86), ("settings", 82), ("debug", 76)]:
+            frame(self.controls[name], x, 12, width, 30)
+            x += width + 4
+        expanded = self.composer_open or self.debug_mode
+        for control in (self.goal, self.source, self.add_button, self.input_scroll, self.controls["project"], self.controls["sharing"]):
+            control.setHidden_(not expanded)
+        top = 58
+        if expanded:
+            frame(self.goal, 16, top, w - 250, 28)
+            frame(self.controls["project"], w - 226, top, 100, 28)
+            frame(self.controls["sharing"], w - 124, top, 110, 28)
+            frame(self.source, 14, top + 36, 176, 28)
+            frame(self.add_button, 14, top + 69, 176, 28)
+            frame(self.input_scroll, 198, top + 36, w - 214, 62)
+            top += 112
+        sidebar = min(236, max(194, w * .22))
+        main_x, main_w = sidebar + 24, w - sidebar - 40
+        bottom = h - (148 if self.debug_mode else 106)
+        frame(self.types_label, 18, top, sidebar - 12, 24)
+        frame(self.types_scroll, 12, top + 30, sidebar, h - top - 70)
+        frame(self.output_title, main_x, top, main_w - 174, 27)
+        frame(self.annotation, w - 188, top, 176, 28)
+        notice_height = 42 if self.notice_text else 0
+        self.notice_label.setHidden_(not self.notice_text)
+        self.notice_label.setStringValue_(self.notice_text)
+        frame(self.notice_label, main_x, top + 32, main_w, 40)
+        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+            frame(scroll, main_x, top + 38 + notice_height, main_w, bottom - top - 38 - notice_height)
         picture = self.image_view.image()
         if picture:
             width = self.image_scroll.contentSize().width
@@ -391,19 +415,27 @@ class Controller(NSObject):
             _, height = diagram_layout(self.graph.artifact, width)
             self.graph.setFrameSize_((width, height + 240))
             self.graph.setNeedsDisplay_(True)
-        frame(self.pin, 16, h - 88, 108, 30)
-        frame(self.copy, 130, h - 88, 110, 30)
-        frame(self.copy_notes, 246, h - 88, 145, 30)
-        frame(self.export, 399, h - 88, 100, 30)
-        frame(self.older, w - 285, h - 88, 80, 30)
-        frame(self.newer, w - 200, h - 88, 80, 30)
-        frame(self.latest, w - 115, h - 88, 100, 30)
-        frame(self.status, 20, h - 49, w - 40, 45)
+        for control, offset, width in [(self.pin, 0, 72), (self.copy, 76, 100), (self.copy_notes, 180, 130), (self.export, 314, 88)]:
+            frame(control, main_x + offset, bottom + 10, width, 30)
+        frame(self.version_label, main_x, bottom + 52, max(90, main_w - 260), 25)
+        frame(self.older, w - 258, bottom + 48, 76, 30)
+        frame(self.newer, w - 178, bottom + 48, 76, 30)
+        frame(self.latest, w - 98, bottom + 48, 82, 30)
+        frame(self.activity, 18, h - 36, sidebar - 10, 24)
+        self.status.setHidden_(not self.debug_mode)
+        frame(self.status, main_x, h - 57, main_w, 46)
+        rows = self.browser.rows(self.debug_mode)
+        width = self.types_scroll.contentSize().width
+        self.types_canvas.setFrameSize_((width, max(self.types_scroll.contentSize().height, len(rows) * 44)))
+        for index, row in enumerate(rows):
+            if row[0] in self.type_buttons:
+                frame(self.type_buttons[row[0]], 0, index * 44, width, 42)
 
     @objc.python_method
     def apply_settings(self, settings):
         self.pause()
         self.settings = settings
+        self.notice_text = ""
         self.trace.enabled = settings.operational_metadata and not self.demo
         self.coordinator.hourly_limit = settings.hourly_requests
         self.coordinator.cancel()
@@ -690,6 +722,7 @@ class Controller(NSObject):
             self.smoke_tick()
         elif not self.demo:
             self.checkpoint_if_enabled()
+        self.update_activity()
 
     @objc.python_method
     def handle_event(self, event):
@@ -707,6 +740,8 @@ class Controller(NSObject):
                 return
             self.apply_context_event(event)
             if event.get("error"):
+                self.notice_text = event["error"][:350]
+                self.relayout()
                 self.capture_failures += 1
                 self.next_capture = time.monotonic() + min(60, 2 ** min(self.capture_failures, 6))
             else:
@@ -744,6 +779,8 @@ class Controller(NSObject):
                         self.status.setStringValue_(
                             "Recent speech could not be finished. Check the audio settings; the current screen is still available."
                         )
+                        self.notice_text = "Recent speech could not be finished. Check the audio settings."
+                        self.relayout()
                     else:
                         self.send_manual_help_if_ready()
             elif kind == "speech":
@@ -752,6 +789,8 @@ class Controller(NSObject):
                 self.refresh_passive_views()
             else:
                 if kind == "audio_error":
+                    self.notice_text = event["message"][:350]
+                    self.relayout()
                     self.manual_help_pending = False
                     self.pending_manual = False
                     self.awaiting_audio_flush = None
@@ -768,6 +807,9 @@ class Controller(NSObject):
         elif kind == "image_ready":
             self.accept_image(event)
         elif kind == "started":
+            self.notice_text = ""
+            self.update_activity()
+            self.relayout()
             self.status.setStringValue_(
                 "Checking whether new evidence warrants another answer…" if event.get("reviewing")
                 else f"Quick and deep assistance started · context {event['revision']}."
@@ -778,13 +820,15 @@ class Controller(NSObject):
             if (
                 event["lane"] == "quick"
                 and event["message"].startswith("Draft: ")
-                and not self.output_history.frozen
-                and not self.summary.selectedRange().length
+                and not self.browser.frozen
+                and self.browser.active_key in {"", GUIDANCE}
+                and self.browser.visible is None
                 and not self.body.selectedRange().length
                 and self.coordinator.published_lane < 1
                 and self.context.task_revision == self.coordinator.last_requested_task_revision
             ):
-                retain_text(self.summary, "Quick thought\n\n" + event["message"][7:])
+                self.output_title.setStringValue_("Quick guidance · Draft")
+                retain_text(self.body, event["message"][7:])
         elif kind in {"result", "error", "cancelled", "unchanged"}:
             if not self.coordinator.accept(event):
                 return
@@ -798,31 +842,29 @@ class Controller(NSObject):
                 self.refresh_passive_views()
                 return
             if kind == "result":
-                if self.body.selectedRange().length or self.summary.selectedRange().length:
-                    self.output_history.freeze()
+                if self.body.selectedRange().length:
+                    self.browser.freeze()
                 job = event["job"]
-                self.output_history.append(
+                entry = self.output_history.append(
                     event["response"], identity=job.request_id + ":" + job.lane,
                     session_id=job.snapshot.session_id, goal=job.snapshot.goal,
                     lane=job.lane, sources=job.snapshot.observations,
                 )
+                self.browser.ingest(entry)
+                self.notice_text = " ".join(note.get("message", "") for note in event["response"]._delivery_notes if note.get("message"))[:350]
                 if job.lane == "deep" and not self.demo:
                     self.image_worker.submit(event["response"], job.snapshot.session_id, job.snapshot.task_revision)
-                self.update_navigation_controls()
-                if self.output_history.frozen:
-                    if str(self.view.titleOfSelectedItem()) == "History":
-                        self.populate_output_picker()
-                    self.show_frozen_status()
-                else:
-                    self.render_response()
-                    self.status.setStringValue_(
-                        f"{event['job'].lane.capitalize()} response · {event['elapsed']:.1f}s · context {event['job'].snapshot.revision}."
-                        + (" Synthetic replay." if self.demo else "")
-                    )
+                self.render_response()
+                self.status.setStringValue_(f"{job.lane.capitalize()} response · {event['elapsed']:.1f}s · context {job.snapshot.revision}.")
             elif kind == "error":
+                self.notice_text = event["message"][:350]
+                self.render_response()
                 self.status.setStringValue_(event["job"].lane.capitalize() + ": " + event["message"])
         elif kind == "notice":
             self.status.setStringValue_(event["message"])
+            self.notice_text = event["message"][:350]
+            self.relayout()
+            self.update_activity()
 
     @objc.python_method
     def accept_image(self, event):
@@ -836,25 +878,21 @@ class Controller(NSObject):
         artifacts, changed = resolve_image(latest.artifacts, job, event.get("asset"), event.get("error"))
         if not changed:
             return
-        if self.body.selectedRange().length or self.summary.selectedRange().length:
-            self.output_history.freeze()
+        if self.body.selectedRange().length:
+            self.browser.freeze()
         # Publish a new immutable display entry. Older/pinned entries stay exact.
         response = latest.response.model_copy(deep=True)
         response.artifacts = artifacts
-        self.output_history.append(response, session_id=latest.session_id, goal=latest.goal, lane="image",
-                                   sources=latest.sources, artifacts=artifacts)
+        entry = self.output_history.append(response, session_id=latest.session_id, goal=latest.goal, lane="image",
+                                           sources=latest.sources, artifacts=artifacts)
+        self.browser.ingest(entry)
         update_image_memory(self.context, job, event.get("asset"), event.get("error"))
         if self.coordinator.current:
             self.coordinator.current.artifacts, _ = resolve_image(self.coordinator.current.artifacts, job,
                                                                   event.get("asset"), event.get("error"))
-        self.update_navigation_controls()
-        if self.output_history.frozen:
-            if str(self.view.titleOfSelectedItem()) == "History":
-                self.populate_output_picker()
-            self.show_frozen_status()
-        else:
-            self.render_response()
-            self.status.setStringValue_(event.get("error") or f"Generated image ready · {event['seconds']:.1f}s.")
+        self.notice_text = event.get("error", "")[:350]
+        self.render_response()
+        self.status.setStringValue_(event.get("error") or f"Generated image ready · {event['seconds']:.1f}s.")
 
     @objc.python_method
     def apply_context_event(self, event):
@@ -878,247 +916,274 @@ class Controller(NSObject):
 
     @objc.python_method
     def render_response(self):
-        output = self.output_history.visible
-        if not output:
-            self.update_navigation_controls()
-            return
-        response = output.response
-        retain_text(self.summary, response.task + "\n\n" + response.summary)
-        self.displayed_artifacts = output.artifacts
-        self.artifact_context = (output.session_id, output.goal)
-        self.populate_output_picker()
+        if not self.debug_mode and self.browser.active_key and self.browser.active_key not in {row[0] for row in self.browser.rows()}:
+            key = self.browser.actionable()
+            if key:
+                self.browser.select_type(key)
+            else:
+                self.browser.state.active_key = ""
+        output = self.browser.visible
+        self.displayed_artifacts = output.response.artifacts if output else []
+        self.artifact_context = (output.session_id, output.goal) if output else None
+        artifact = self.current_artifact()
+        self.selected_id = artifact.id if artifact else ""
+        self.update_type_list()
         self.refresh_body()
         self.update_navigation_controls()
 
     @objc.python_method
-    def populate_output_picker(self):
-        if str(self.view.titleOfSelectedItem()) == "History":
-            entries = list(reversed(self.output_history.entries))
-            self.history_choices = [item.id for item in entries]
-            self.artifacts.removeAllItems()
-            self.artifacts.addItemsWithTitles_([item.title() for item in entries] or ["No saved output yet"])
-            visible = self.output_history.visible
-            index = next((i for i, item in enumerate(entries) if visible and item.id == visible.id), 0)
-            self.artifacts.selectItemAtIndex_(index)
-            return
-        output = self.output_history.visible
-        previous = (output.selected_artifact_id if output else "") or self.selected_id
-        self.artifacts.removeAllItems()
-        titles = [a.title for a in self.displayed_artifacts]
-        self.artifacts.addItemsWithTitles_(titles or ["Conversation / next step"])
-        index = next((i for i, a in enumerate(self.displayed_artifacts) if a.id == previous), 0)
-        self.artifacts.selectItemAtIndex_(index)
-        self.selected_id = self.displayed_artifacts[index].id if self.displayed_artifacts else ""
-        if output:
-            output.selected_artifact_id = self.selected_id
+    def update_type_list(self):
+        rows = self.browser.rows(self.debug_mode)
+        visible_keys = {row[0] for row in rows}
+        known = set(self.browser.state.types) | LIVE_DEBUG.keys()
+        for key in list(self.type_buttons):
+            if key not in known:
+                self.type_buttons.pop(key).removeFromSuperview()
+        for key, control in self.type_buttons.items():
+            control.setHidden_(key not in visible_keys)
+        for key, title, count, status in rows:
+            if key not in self.type_buttons:
+                control = OutputTypeButton.alloc().initWithFrame_(NSMakeRect(0, 0, 200, 42))
+                control.setBordered_(False)
+                control.setTarget_(self)
+                control.setAction_("chooseOutputType:")
+                control.output_key = key
+                self.types_canvas.addSubview_(control)
+                self.type_buttons[key] = control
+            control = self.type_buttons[key]
+            control.setTitle_(title + (" …" if status == "pending" else " !" if status == "failed" else ""))
+            stream = self.browser.state.types.get(key)
+            version = stream.visible or (stream.versions[-1] if stream.versions else None) if stream else None
+            artifact = version.artifact if version else None
+            kind = artifact.kind if artifact else "image" if stream and stream.status else ""
+            heading = {"code": "Code", "patch": "Changes", "image": "Image", "diagram": "Diagram"}.get(kind, title)
+            control.output_heading = heading + (" …" if status == "pending" else " !" if status == "failed" else "")
+            control.output_subtitle = title if heading != title else ""
+            control.output_selected = key == self.browser.active_key
+            control.newer_count = count
+            control.setToolTip_(f"{title} · {count} newer version{'s' if count != 1 else ''}. Select to hold this type's viewing position.")
+            control.setAccessibilityLabel_(title)
+            control.setAccessibilityValue_(f"{count} newer versions" + (", selected" if control.output_selected else ""))
+            control.setNeedsDisplay_(True)
+        self.relayout()
 
     @objc.python_method
     def displayed_response(self):
-        output = self.output_history.visible
+        output = self.browser.visible
         return output.response if output else None
 
     @objc.python_method
     def refresh_passive_views(self):
-        if self.body.selectedRange().length or self.summary.selectedRange().length:
-            self.output_history.freeze()
+        if self.body.selectedRange().length:
+            self.browser.freeze()
             self.update_navigation_controls()
-        if not self.output_history.frozen:
+        self.update_activity()
+        if self.browser.active_key in LIVE_DEBUG:
             self.refresh_body()
 
     @objc.python_method
+    def update_activity(self):
+        state = "Listening" if self.voice_recording else "Following" if self.running else "Paused"
+        if self.coordinator.active_lanes:
+            state += " · Working"
+        if self.notice_text:
+            state = "Needs attention"
+        if str(self.activity.stringValue()) != state:
+            self.activity.setStringValue_(state)
+        self.activity.setToolTip_(self.notice_text or state)
+
+    @objc.python_method
     def update_navigation_controls(self):
-        index, count = self.output_history.position, len(self.output_history.entries)
+        stream = self.browser.current
+        index, count = self.browser.position, len(stream.versions) if stream else 0
         self.older.setEnabled_(index > 0)
         self.newer.setEnabled_(0 <= index < count - 1)
-        self.latest.setEnabled_(self.output_history.latest is not None)
-        self.pin.setTitle_("Unpin" if self.output_history.frozen else "Pin")
+        self.latest.setEnabled_(bool(count))
+        self.pin.setEnabled_(bool(count))
+        self.pin.setTitle_("Unpin" if self.browser.frozen else "Pin")
+        self.version_label.setStringValue_(f"{index + 1} / {count} · {'Held' if self.browser.frozen else 'Live'}" if index >= 0 else "")
+        self.copy.setEnabled_(self.browser.visible is not None or self.browser.active_key in LIVE_DEBUG)
+        self.export.setEnabled_(self.browser.visible is not None)
+        artifact = self.current_artifact()
+        code = bool(artifact and artifact.kind in {"code", "patch"})
+        self.annotation.setHidden_(not code)
+        self.copy_notes.setHidden_(not code)
+        self.update_activity()
 
     @objc.python_method
     def show_frozen_status(self):
-        count = self.output_history.newer_count
-        self.status.setStringValue_(f"Output frozen · {count} newer output{'s' if count != 1 else ''} available. Latest resumes live updates.")
+        self.status.setStringValue_(f"Selected type held · {self.browser.newer_count} newer versions available. Latest resumes this type.")
+        self.update_type_list()
+        self.update_navigation_controls()
 
     @objc.python_method
     def current_artifact(self):
-        return next((a for a in self.displayed_artifacts if a.id == self.selected_id), None)
+        return self.browser.visible.artifact if self.browser.visible else None
+
+    @objc.python_method
+    def reply_text(self, debug=False):
+        output = self.browser.visible
+        if not output:
+            return ""
+        sources = {source.id: source for source in output.sources}
+        rows = []
+        for reply in output.response.conversation:
+            text = reply.text
+            if debug:
+                source = sources.get(reply.source_id)
+                who = {"primary_user": "You", "other_people": "Other person", "uncertain": "Uncertain speaker"}.get(source.speaker, "Context") if source else "Context"
+                text = f"{who}: {source.text if source else 'Earlier conversation'}\n\n{reply.action.capitalize()}\n{text}\n\n{reply.artifact_effect}"
+            rows.append(text)
+        return "\n\n——————\n\n".join(rows)
 
     @objc.python_method
     def refresh_body(self):
+        key = self.browser.active_key
+        stream = self.browser.current
         response = self.displayed_response()
-        view = str(self.view.titleOfSelectedItem())
         artifact = self.current_artifact()
-        show_diagram = bool(view == "Artifact" and response and artifact and artifact.kind == "diagram")
+        self.output_title.setStringValue_(stream.label if stream else LIVE_DEBUG.get(key, "Ready"))
+        show_diagram = bool(artifact and artifact.kind == "diagram")
         show_image = False
         image_error = ""
-        if view == "Artifact" and artifact and artifact.kind == "image":
+        if artifact and artifact.kind == "image":
             try:
                 data = json.loads(artifact.content)
-                if data.get("status") == "ready":
-                    path = image_path(data)
-                    if self.loaded_image_id != data["asset_id"]:
-                        picture = A.NSImage.alloc().initWithContentsOfFile_(str(path))
-                        if not picture:
-                            raise ValueError("Generated image could not be decoded")
-                        self.image_view.setImage_(picture)
-                        self.loaded_image_id = data["asset_id"]
-                    show_image = True
-                    self.relayout()
+                path = image_path(data)
+                if self.loaded_image_id != data["asset_id"]:
+                    picture = A.NSImage.alloc().initWithContentsOfFile_(str(path))
+                    if not picture:
+                        raise ValueError("Generated image could not be decoded")
+                    self.image_view.setImage_(picture)
+                    self.loaded_image_id = data["asset_id"]
+                show_image = True
+                self.relayout()
             except (ValueError, OSError, AttributeError) as error:
-                image_error = "\n\n" + str(error)
+                image_error = "Image unavailable. " + str(error)
         self.graph_scroll.setHidden_(not show_diagram)
         self.image_scroll.setHidden_(not show_image)
         self.body_scroll.setHidden_(show_diagram or show_image)
-        if view == "Context":
+        if key == CONTEXT and self.debug_mode:
             review = self.coordinator.last_refresh_reason
             text = ("Latest answer-refresh decision\n" + review + "\n\n" if review else "")
-            text += "Working context (revisable, source-linked)\n\n" + "\n".join(
+            text += "Working context\n\n" + "\n\n".join(
                 f"{item.kind} · {item.basis} · {', '.join(item.source_ids)}\n{item.text}"
                 for item in self.context.context_items.values()
             ) + "\n\nCaptured observations\n\n" + "\n\n".join(
-                f"{o.id} · {o.channel} · {o.speaker} · {o.confidence}\n{o.text}" for o in self.context.observations
-            )
-        elif view == "Observed files":
-            excerpts = []
-            for path, fragments in self.context.files.items():
-                for index, fragment in enumerate(fragments, 1):
-                    location = (
-                        f"starts at line {fragment.first_line}" if fragment.first_line else "line position unknown"
-                    )
-                    state = " · retired from working context" if path in self.context.retired_files else ""
-                    excerpts.append(f"{path} · excerpt {index} · {location}{state}\n{fragment.content}")
-            text = "Observed on screen — partial files\n\n" + (
-                "\n\n".join(excerpts) or "No file excerpts identified yet."
-            )
-            text += "\n\nFiles read from the selected project\n" + "\n".join(
-                f"{p} ({len(c.splitlines())} lines)" for p, c in self.context.verified_files.items()
-            )
-            if self.context.repo_root:
-                text += "\n\nSelected folder: " + self.context.repo_root
-        elif view == "History":
-            output = self.output_history.visible
-            text = ("Choose an output from the menu above. Older/Newer browse without resuming updates.\n\n"
-                    + output.title() + "\n\n" + response.summary + "\n\n"
-                    + "\n\n".join(a.title + "\n" + (a.annotated_text() if self.annotation.state() else a.clean_text())
-                                  for a in output.artifacts)) if output else "Previous outputs will appear here."
-        elif response and (view == "Conversation" or not artifact):
-            output = self.output_history.visible
-            sources = {o.id: o for o in output.sources} if output else {}
-            replies = []
-            for reply in response.conversation:
-                source = sources.get(reply.source_id)
-                quote = source.text if source else "Earlier conversation"
-                who = (
-                    {"primary_user": "You", "other_people": "Other person", "uncertain": "Uncertain speaker"}.get(
-                        source.speaker, "Context"
-                    )
-                    if source
-                    else "Context"
-                )
-                replies.append(
-                    f"{who}: {quote}\n\n{reply.action.capitalize()}\n{reply.text}\n\n{reply.artifact_effect}"
-                )
-            text = "\n\n——————\n\n".join(replies)
-            if response.open_questions:
-                text += "\n\nStill open\n" + "\n".join(response.open_questions)
-            text = text or response.summary
+                f"{o.id} · {o.channel} · {o.speaker} · {o.confidence}\n{o.text}" for o in self.context.observations)
+        elif key == FILES and self.debug_mode:
+            text = "Observed fragments (not complete files)\n\n" + "\n\n".join(
+                f"{path} · line {fragment.first_line or '?'}\n{fragment.content}"
+                for path, fragments in self.context.files.items() for fragment in fragments)
+            text += "\n\nSelected project files\n" + "\n".join(
+                f"{path} ({len(content.splitlines())} lines)" for path, content in self.context.verified_files.items())
+        elif key == EVENTS and self.debug_mode:
+            text = "Accepted output events\n\n" + "\n\n".join(
+                entry.title() + "\n" + json.dumps(entry.response.model_dump(), ensure_ascii=False, indent=2)
+                for entry in reversed(self.output_history.entries))
+        elif key == REPLIES:
+            text = self.reply_text(self.debug_mode)
         elif artifact:
-            basis = {
-                "example": "Example",
-                "observed_fragment": "Based on a partial observation",
-                "verified_file": "Compared with the selected project snapshot",
-                "discussion": "Based on discussion",
-            }[artifact.basis]
-            if artifact.basis == "verified_file" and digest(artifact.model_dump()) in self.restored_artifact_keys:
-                current = self.context.verified_files.get(artifact.path)
-                original = self.coordinator.artifact_bases.get(digest(artifact.model_dump()), {}).get("base_hash")
-                basis = (
-                    "Saved proposal — base matches the selected snapshot"
-                    if current is not None and digest(current) == original
-                    else "Saved proposal — current file base has not been confirmed"
-                )
+            prefix = ""
+            if artifact.kind in {"code", "patch"}:
+                basis = {"example": "Example code", "observed_fragment": "Partial observed code", "verified_file": "Proposed change", "discussion": "Suggested code"}[artifact.basis]
+                if digest(artifact.model_dump()) in self.restored_artifact_keys and artifact.basis == "verified_file":
+                    current = self.context.verified_files.get(artifact.path)
+                    original = self.coordinator.artifact_bases.get(digest(artifact.model_dump()), {}).get("base_hash")
+                    basis = "Saved proposal · base confirmed" if current is not None and digest(current) == original else "Saved proposal · current base unconfirmed"
+                prefix = basis + (" · " + artifact.path if artifact.path else "") + "\n\n"
+            if self.debug_mode:
+                prefix += f"Basis: {artifact.basis}\nSources: {', '.join(artifact.source_ids)}\n\n"
             if artifact.kind == "diagram":
                 self.graph.artifact = artifact
                 self.relayout()
-            text = (
-                basis
-                + (" · " + artifact.path if artifact.path else "")
-                + "\n\n"
-                + (artifact.annotated_text() if self.annotation.state() or artifact.kind in {"structured", "image"} else artifact.clean_text())
-                + image_error
-            )
+            text = prefix + (image_error or (artifact.annotated_text() if self.annotation.state() or artifact.kind in {"structured", "image"} else artifact.clean_text()))
+        elif response:
+            text = (response.task + "\n\n" if key == DETAILS else "") + response.summary
+            if response.open_questions:
+                text += "\n\n" + "\n".join(response.open_questions)
+        elif stream and stream.status:
+            text = "The image is being created. Other outputs remain available." if stream.status == "pending" else "Image generation failed. Check Settings or ask Help now to retry."
+            if self.debug_mode and stream.error:
+                text += "\n\n" + stream.error
         else:
-            text = "Your artifact will appear here. You can select and copy text, resize the window, or pin a response while reading."
+            text = "Press Help now for a response, or Start following to work with your screen and conversation. Use Task… to add instructions."
         retain_text(self.body, text)
+        self.body.setFont_(A.NSFont.monospacedSystemFontOfSize_weight_(14, A.NSFontWeightRegular) if artifact and artifact.kind in {"code", "patch"} or self.debug_mode else A.NSFont.systemFontOfSize_(15))
 
     def changeView_(self, sender):
-        if str(self.view.titleOfSelectedItem()) in {"Artifact", "History"} and sender is not self.annotation:
-            self.output_history.freeze()
-            self.show_frozen_status()
-        self.populate_output_picker()
+        # Kept as the annotation checkbox action; selecting a type is explicit.
         self.refresh_body()
-        self.update_navigation_controls()
 
-    def chooseArtifact_(self, sender):
-        if str(self.view.titleOfSelectedItem()) == "History":
-            index = self.artifacts.indexOfSelectedItem()
-            if 0 <= index < len(self.history_choices) and self.output_history.select(self.history_choices[index]):
-                self.show_selected_output()
-            return
-        if self.displayed_artifacts:
-            self.selected_id = self.displayed_artifacts[self.artifacts.indexOfSelectedItem()].id
-            if self.output_history.visible:
-                self.output_history.visible.selected_artifact_id = self.selected_id
-        self.output_history.freeze()
-        self.refresh_body()
-        self.update_navigation_controls()
-        self.show_frozen_status()
+    def chooseOutputType_(self, sender):
+        if self.browser.select_type(sender.output_key):
+            self.show_selected_output()
+
+    def toggleComposer_(self, sender):
+        self.composer_open = not self.composer_open
+        self.controls["task"].setTitle_("Close task" if self.composer_open else "Task…")
+        self.relayout()
+
+    def toggleDebug_(self, sender):
+        self.set_debug(not self.debug_mode)
+
+    @objc.python_method
+    def set_debug(self, enabled):
+        self.debug_mode = enabled
+        self.controls["debug"].setState_(int(enabled))
+        if not enabled and self.browser.active_key not in {row[0] for row in self.browser.rows()}:
+            key = self.browser.actionable()
+            if key:
+                self.browser.select_type(key)
+            else:
+                self.browser.state.active_key = ""
+        self.render_response()
+        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+            scroll.reflectScrolledClipView_(scroll.contentView())
 
     def togglePin_(self, sender):
-        if self.output_history.frozen:
+        if self.browser.frozen:
             self.latestOutput_(None)
         else:
-            self.output_history.freeze()
-            self.update_navigation_controls()
+            self.browser.freeze()
             self.show_frozen_status()
 
     @objc.python_method
     def show_selected_output(self):
         self.body.setSelectedRange_((0, 0))
-        self.summary.setSelectedRange_((0, 0))
-        self.body_scroll.contentView().scrollToPoint_((0, 0))
-        self.graph_scroll.contentView().scrollToPoint_((0, 0))
-        self.image_scroll.contentView().scrollToPoint_((0, 0))
-        if str(self.view.titleOfSelectedItem()) != "Conversation":
-            self.view.selectItemWithTitle_("Artifact")
+        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+            scroll.contentView().scrollToPoint_((0, 0))
         self.render_response()
-        if self.output_history.frozen:
-            self.show_frozen_status()
+        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+            scroll.reflectScrolledClipView_(scroll.contentView())
 
     def olderOutput_(self, sender):
-        if self.output_history.move(-1):
+        if self.browser.move(-1):
             self.show_selected_output()
 
     def newerOutput_(self, sender):
-        if self.output_history.move(1):
+        if self.browser.move(1):
             self.show_selected_output()
 
     def latestOutput_(self, sender):
-        self.output_history.resume()
+        self.browser.resume()
         self.show_selected_output()
-        self.status.setStringValue_("Following the latest output. New answers will update this pane.")
 
     @objc.python_method
     def copy_text(self, explained=False):
-        if str(self.view.titleOfSelectedItem()) != "Artifact":
-            return str(self.body.string())
         artifact = self.current_artifact()
         if artifact:
             return artifact.annotated_text() if explained else artifact.clean_text()
+        if self.browser.active_key == REPLIES:
+            return self.reply_text(debug=explained)
+        response = self.displayed_response()
+        if response and self.browser.active_key == GUIDANCE:
+            return response.summary + ("\n\n" + "\n".join(response.open_questions) if response.open_questions else "")
         return str(self.body.string())
 
     def copyClean_(self, sender):
         pasteboard = A.NSPasteboard.generalPasteboard()
-        artifact = self.current_artifact() if str(self.view.titleOfSelectedItem()) == "Artifact" else None
+        artifact = self.current_artifact()
         if artifact and artifact.kind == "image":
             try:
                 picture = A.NSImage.alloc().initWithContentsOfFile_(str(image_path(json.loads(artifact.content))))
@@ -1127,6 +1192,8 @@ class Controller(NSObject):
                 self.status.setStringValue_("Generated image copied.")
             except (ValueError, OSError) as error:
                 self.status.setStringValue_(str(error))
+                self.notice_text = str(error)[:350]
+                self.relayout()
             return
         pasteboard.clearContents()
         pasteboard.setString_forType_(self.copy_text(), A.NSPasteboardTypeString)
@@ -1150,8 +1217,10 @@ class Controller(NSObject):
             self.coordinator,
             displayed_artifacts=self.displayed_artifacts,
             selected_id=self.selected_id,
-            selected_view=str(self.view.titleOfSelectedItem()),
+            selected_view="Artifact" if self.current_artifact() else "Conversation" if self.browser.active_key == REPLIES else "Context",
             output_history=self.output_history,
+            output_browser=self.browser,
+            debug_mode=self.debug_mode,
         )
 
     def saveSession_(self, sender):
@@ -1214,9 +1283,6 @@ class Controller(NSObject):
         if document.outputs:
             self.output_history.entries = [item.model_copy(update={"session_id": self.context.session_id}, deep=True)
                                            for item in document.outputs]
-            if document.pinned:
-                self.output_history.frozen = True
-                self.output_history.selected_id = document.selected_output_id
         else:
             for response in document.history:
                 self.output_history.append(response, session_id=self.context.session_id, goal=self.context.goal,
@@ -1225,28 +1291,36 @@ class Controller(NSObject):
                 self.output_history.append(document.current, session_id=self.context.session_id, goal=self.context.goal,
                                            lane="saved", sources=self.context.observations, at=document.saved_at,
                                            artifacts=document.displayed_artifacts)
-            if document.pinned:
-                self.output_history.freeze()
+        self.browser = OutputBrowser(document.output_browser)
+        if document.output_browser:
+            for stream in self.browser.state.types.values():
+                for version in stream.versions:
+                    version.session_id = self.context.session_id
+            self.debug_mode = document.debug_mode
+        else:
+            for entry in self.output_history.entries:
+                self.browser.ingest(entry)
+            legacy_key = artifact_key(document.selected_id) if document.selected_view == "Artifact" else {
+                "Conversation": REPLIES, "Context": CONTEXT, "Observed files": FILES, "History": EVENTS,
+            }.get(document.selected_view, "")
+            if legacy_key:
+                self.browser.select_type(legacy_key, follow=not document.pinned)
+                stream = self.browser.current
+                if stream and document.selected_output_id:
+                    match = next((version for version in stream.versions if version.parent_id == document.selected_output_id), None)
+                    if match:
+                        stream.cursor = match.id
+            self.debug_mode = legacy_key in LIVE_DEBUG or legacy_key == artifact_key("_assistance_plan")
         self.coordinator.artifact_bases = dict(document.artifact_bases)
-        self.displayed_artifacts = list(document.displayed_artifacts)
-        self.artifact_context = (self.context.session_id, self.context.goal)
-        self.selected_id = document.selected_id
         self.loaded_base_hashes = dict(document.base_hashes)
         self.restored_artifact_keys = {digest(a.model_dump()) for a in document.displayed_artifacts}
         self.restored_artifact_keys.update(digest(a.model_dump()) for item in document.outputs for a in item.artifacts)
+        self.restored_artifact_keys.update(digest(version.artifact.model_dump()) for stream in self.browser.state.types.values()
+                                          for version in stream.versions if version.artifact)
         self.goal.setStringValue_(self.context.goal)
-        if document.selected_view in {"Artifact", "Conversation", "Context", "Observed files", "History"}:
-            self.view.selectItemWithTitle_(document.selected_view)
-        self.pin.setTitle_("Unpin" if document.pinned else "Pin")
+        self.controls["debug"].setState_(int(self.debug_mode))
         self.body.setSelectedRange_((0, 0))
-        self.summary.setSelectedRange_((0, 0))
         self.render_response()
-        if document.current is None:
-            retain_text(self.summary, "Restored task\n\n" + (self.context.goal or "No goal has been set yet."))
-            self.artifacts.removeAllItems()
-            self.artifacts.addItemsWithTitles_([a.title for a in self.displayed_artifacts] or ["No artifact yet"])
-        self.refresh_body()
-        self.update_navigation_controls()
         self.trace.record("session_restored", session_id=self.context.session_id, revision=self.context.revision)
         self.status.setStringValue_(
             "Task session restored. Capture is paused; saved proposals need fresh context before reuse."
@@ -1310,8 +1384,8 @@ class Controller(NSObject):
             self.context.session_id,
             self.context.revision,
             digest(current.model_dump()) if current else "",
-            self.output_history.frozen,
-            self.output_history.selected_id,
+            digest(self.browser.state.model_dump()),
+            self.debug_mode,
             self.selected_id,
         )
         if signature == self.checkpoint_signature:
@@ -1361,21 +1435,23 @@ class Controller(NSObject):
 
     def exportArtifact_(self, sender):
         artifact = self.current_artifact()
-        if not artifact:
+        if not self.browser.visible:
             return
         panel = A.NSSavePanel.savePanel()
-        suffix = {"diagram": ".svg", "image": ".png", "patch": ".diff", "structured": ".json"}.get(artifact.kind, ".txt")
-        panel.setNameFieldStringValue_(Path(artifact.id).name + suffix)
+        suffix = {"diagram": ".svg", "image": ".png", "patch": ".diff", "structured": ".json"}.get(artifact.kind if artifact else "text", ".txt")
+        panel.setNameFieldStringValue_(Path(artifact.id).name + suffix if artifact else "output.txt")
         if panel.runModal() == A.NSModalResponseOK:
             try:
                 target = Path(str(panel.URL().path()))
-                if artifact.kind == "image":
+                if artifact and artifact.kind == "image":
                     target.write_bytes(image_path(json.loads(artifact.content)).read_bytes())
                 else:
-                    target.write_text(diagram_svg(artifact) if artifact.kind == "diagram" else artifact.clean_text())
+                    target.write_text(diagram_svg(artifact) if artifact and artifact.kind == "diagram" else self.copy_text())
                 self.status.setStringValue_("Artifact exported.")
             except (OSError, ValueError) as error:
                 self.status.setStringValue_(str(error))
+                self.notice_text = str(error)[:350]
+                self.relayout()
 
     def toggleClickThrough_(self, sender):
         ignore = not self.window.ignoresMouseEvents()
@@ -1390,13 +1466,16 @@ class Controller(NSObject):
     def set_click_through(self, enabled):
         set_overlay_appearance(
             self.window, self.root, enabled,
-            panes=[(self.body_scroll, self.body), (self.summary_scroll, self.summary),
+            panes=[(self.body_scroll, self.body), (self.types_scroll, None),
                    (self.input_scroll, self.input), (self.graph_scroll, None), (self.image_scroll, None)],
             fields=[self.goal],
-            buttons=[*self.controls.values(), self.add_button, self.source, self.view, self.artifacts,
+            buttons=[*self.controls.values(), self.add_button, self.source,
                      self.annotation, self.pin, self.older, self.newer, self.latest, self.copy, self.copy_notes, self.export],
-            canvases=[self.graph, self.image_canvas],
+            canvases=[self.graph, self.image_canvas, self.types_canvas],
         )
+        for control in self.type_buttons.values():
+            control.setNeedsDisplay_(True)
+        self.relayout()
 
     def toggleVisibility_(self, sender):
         self.overlay_hidden = not self.overlay_hidden
@@ -1421,15 +1500,18 @@ class Controller(NSObject):
             "copy_clean": self.copyClean_,
             "click_through": self.toggleClickThrough_,
         }
-        views = {
-            "view_artifact": "Artifact", "view_conversation": "Conversation", "view_context": "Context",
-            "view_files": "Observed files", "view_history": "History",
-        }
+        debug_views = {"view_context": CONTEXT, "view_files": FILES, "view_history": EVENTS}
         if action in handlers:
             handlers[action](None)
-        elif action in views:
-            self.view.selectItemWithTitle_(views[action])
-            self.changeView_(self.view)
+        elif action in debug_views:
+            self.set_debug(True)
+            self.browser.select_type(debug_views[action])
+            self.show_selected_output()
+        elif action in {"view_artifact", "view_conversation"}:
+            self.set_debug(False)
+            key = self.browser.actionable(artifacts=True) if action == "view_artifact" else REPLIES if REPLIES in self.browser.state.types else GUIDANCE
+            if key and self.browser.select_type(key):
+                self.show_selected_output()
         elif action in {"left", "right", "up", "down"}:
             rect = self.window.frame()
             dx, dy = {"left": (-50, 0), "right": (50, 0), "up": (0, 50), "down": (0, -50)}[action]
@@ -1448,8 +1530,7 @@ class Controller(NSObject):
                 True,
             )
         elif action == "next_view":
-            self.view.selectItemAtIndex_((self.view.indexOfSelectedItem() + 1) % self.view.numberOfItems())
-            self.changeView_(None)
+            self.cycle_artifact(1)
         elif action == "next_page":
             self.advance_page()
         elif action in {"page_up", "page_down"}:
@@ -1461,17 +1542,12 @@ class Controller(NSObject):
 
     @objc.python_method
     def cycle_artifact(self, step):
-        if not self.displayed_artifacts:
-            return
-        self.view.selectItemWithTitle_("Artifact")
-        self.populate_output_picker()
-        index = (self.artifacts.indexOfSelectedItem() + step) % len(self.displayed_artifacts)
-        self.artifacts.selectItemAtIndex_(index)
-        self.chooseArtifact_(None)
+        if self.browser.cycle_type(step, debug=self.debug_mode):
+            self.show_selected_output()
 
     @objc.python_method
     def page_output(self, direction):
-        self.output_history.freeze()
+        self.browser.freeze()
         self.update_navigation_controls()
         scroll = self.output_scroll()
         clip = scroll.contentView()
@@ -1484,24 +1560,7 @@ class Controller(NSObject):
 
     @objc.python_method
     def advance_page(self):
-        scroll = self.output_scroll()
-        clip = scroll.contentView()
-        bounds = clip.bounds()
-        total = scroll.documentView().bounds().size.height
-        if bounds.origin.y + bounds.size.height < total - 2:
-            clip.scrollToPoint_(
-                (bounds.origin.x, min(total - bounds.size.height, bounds.origin.y + max(40, bounds.size.height - 24)))
-            )
-            scroll.reflectScrolledClipView_(clip)
-            return
-        if str(self.view.titleOfSelectedItem()) == "Artifact" and self.displayed_artifacts:
-            self.artifacts.selectItemAtIndex_(
-                (self.artifacts.indexOfSelectedItem() + 1) % len(self.displayed_artifacts)
-            )
-            self.chooseArtifact_(None)
-        scroll = self.output_scroll()
-        scroll.contentView().scrollToPoint_((0, 0))
-        scroll.reflectScrolledClipView_(scroll.contentView())
+        self.page_output(1)
 
     @objc.python_method
     def output_scroll(self):
@@ -1554,7 +1613,6 @@ class Controller(NSObject):
         self.image_worker.cancel()
         self.goal.setStringValue_("")
         self.input.setString_("")
-        self.view.selectItemWithTitle_("Artifact")
         self.coordinator.current = self.coordinator.pending = None
         self.coordinator.pending_version = None
         self.coordinator.pinned = False
@@ -1567,14 +1625,12 @@ class Controller(NSObject):
         self.restored_artifact_keys = set()
         self.artifact_context = None
         self.body.setSelectedRange_((0, 0))
-        self.summary.setSelectedRange_((0, 0))
         self.pin.setTitle_("Pin")
         self.selected_id = ""
-        self.artifacts.removeAllItems()
-        self.artifacts.addItemWithTitle_("No artifact yet")
+        self.browser.clear()
+        self.notice_text = ""
         self.update_navigation_controls()
-        retain_text(self.summary, "A new task is ready. Add its goal, screen, or conversation.")
-        self.refresh_body()
+        self.render_response()
 
     @objc.python_method
     def load_demo(self, design):
@@ -1582,14 +1638,13 @@ class Controller(NSObject):
         self.displayed_artifacts = []
         self.artifact_context = None
         self.body.setSelectedRange_((0, 0))
-        self.summary.setSelectedRange_((0, 0))
         self.demo = True
         self.context.set_repo("")
         self.coordinator.current = self.coordinator.pending = None
         self.coordinator.pinned = False
         self.output_history.clear()
+        self.browser.clear()
         seed_demo(self.context, design=design)
-        self.view.selectItemWithTitle_("Artifact")
         self.goal.setStringValue_(self.context.goal)
         self.window.setTitle_("Over The Shoulder Coder · Synthetic demo")
         self.coordinator.request(manual=True)
@@ -1639,318 +1694,10 @@ class Controller(NSObject):
         private_write(path, bytes(data))
 
     @objc.python_method
-    def smoke_planned_outputs(self, directory):
-        import io
-        from unittest.mock import patch
-
-        from PIL import Image, ImageDraw
-
-        from otsc.images import ImageJob, image_key, store_png
-        from otsc.models import Artifact, Assistance
-
-        source = self.context.snapshot().observations[0].id
-        data = {"route_options": [{"name": "Canal path", "available": True, "minutes": None}], "confidence": 0.7}
-        structured = Artifact(id="travel_manifest", kind="structured", title="Travel manifest", content=json.dumps(data),
-                              language="json", path="", basis="discussion", source_ids=[source], annotations=[], nodes=[], edges=[])
-        response = Assistance(task="Synthetic rendering check", summary="Unfamiliar structured data and an image.",
-                              artifacts=[structured], conversation=[], observed_files=[], open_questions=[])
-        self.output_history.resume()
-        self.selected_id = structured.id
-        self.output_history.append(response, session_id=self.context.session_id, goal=self.context.goal, lane="deep")
-        self.render_response()
-        assert "Canal path" in str(self.body.string()) and "null" in str(self.body.string())
-        assert json.loads(self.copy_text()) == data
-        self.save_view_image(directory / "structured-output.png")
-        request = {"status": "pending", "action": "generate", "prompt": "Synthetic image fixture", "caption": "Synthetic image fixture"}
-        artifact = structured.model_copy(update={"id": "illustration", "kind": "image", "title": "Illustration",
-                                                "content": json.dumps(request), "language": ""}, deep=True)
-        response.artifacts = [artifact]
-        self.context.previous_artifacts = json.dumps([artifact.model_dump()])
-        self.output_history.append(response, session_id=self.context.session_id, goal=self.context.goal, lane="deep")
-        self.selected_id = artifact.id
-        self.render_response()
-        assert "Generating image" in str(self.body.string())
-        self.output_history.freeze()
-        held = self.output_history.visible
-        picture = Image.new("RGB", (900, 1200), "#f3e7d3")
-        ImageDraw.Draw(picture).text((80, 120), "SYNTHETIC IMAGE\nNative fit and scroll test", fill="#30291f", font_size=44)
-        raw = io.BytesIO()
-        picture.save(raw, "PNG")
-        with patch("otsc.images.app_directory", return_value=directory):
-            asset = store_png(raw.getvalue())
-            job = ImageJob(self.context.session_id, artifact.id, image_key(request, self.settings.image), request,
-                           self.settings.image, Cancellation(), self.context.task_revision)
-            self.accept_image({"job": job, "asset": asset, "seconds": 0})
-            assert self.output_history.visible is held
-            assert json.loads(held.artifacts[0].content)["status"] == "pending"
-            assert json.loads(self.context.previous_artifacts)[0]["content"] != artifact.content
-            self.latestOutput_(None)
-            assert not self.image_scroll.isHidden() and self.body_scroll.isHidden()
-            assert self.output_scroll() is self.image_scroll
-            self.window.setContentSize_((900, 740))
-            assert abs(self.image_view.frame().size.width - self.image_scroll.contentSize().width) < 1
-            assert abs(self.image_view.frame().size.height / self.image_view.frame().size.width - 4 / 3) < .01
-            self.page_output(1)
-            assert self.image_scroll.contentView().bounds().origin.y > 0
-            self.image_scroll.contentView().scrollToPoint_((0, 0))
-            self.save_view_image(directory / "image-output.png")
-            self.set_click_through(True)
-            assert self.window.alphaValue() == 1.0 and self.image_canvas.background_alpha == 0
-            assert self.image_view.image() is not None
-            self.set_click_through(False)
-            # A result for an older task cannot alter the visible image or memory.
-            latest_id, memory = self.output_history.latest.id, self.context.previous_artifacts
-            job.task_revision -= 1
-            self.accept_image({"job": job, "asset": asset, "seconds": 0})
-            assert self.output_history.latest.id == latest_id and self.context.previous_artifacts == memory
-
-    @objc.python_method
     def smoke_tick(self):
-        try:
-            if time.monotonic() - self.smoke_started > 12:
-                raise RuntimeError("Native smoke test timed out waiting for demo results")
-            response = self.coordinator.current
-            if not response or not response.artifacts:
-                return
-            directory = private_directory(Path(self.options.smoke_test))
-            if self.smoke_step == 0:
-                from types import SimpleNamespace
+        from otsc.native_smoke import smoke_tick
 
-                injected = queue.Queue()
-                midi_clock = [0.0]
-                keypad = MidiInput(injected, clock=lambda: midi_clock[0])
-
-                def press_key(note):
-                    midi_clock[0] += 0.2
-                    keypad.receive(SimpleNamespace(type="note_on", channel=0, note=note, velocity=100))
-                    self.handle_event(injected.get_nowait())
-
-                assert response.artifacts[0].kind == "code"
-                before = self.copy_text()
-                assert "return None" in before and "Represent missing" not in before
-                self.body.setSelectedRange_((5, 10))
-                self.window.setContentSize_((850, 680))
-                assert self.copy_text() == before
-                assert self.body.selectedRange().length == 10
-                press_key(63)
-                assert self.window.ignoresMouseEvents() and self.window.alphaValue() == 1.0
-                assert not self.window.isOpaque() and self.root.background_alpha == 0.05
-                assert not self.body.drawsBackground() and not self.body_scroll.drawsBackground()
-                assert self.body.textColor().alphaComponent() == 1.0
-                self.save_view_image(directory / "transparent-code.png")
-                from PIL import Image
-
-                with Image.open(directory / "transparent-code.png") as image:
-                    pixels = image.convert("RGBA")
-                    scale = pixels.width / self.root.bounds().size.width
-                    pane = self.body_scroll.frame()
-                    assert pixels.getpixel((int((pane.origin.x + 4) * scale), int((pane.origin.y + 4) * scale)))[3] <= 14
-                    ink = pixels.crop((int((pane.origin.x + 20) * scale), int((pane.origin.y + 20) * scale),
-                                       int((pane.origin.x + pane.size.width - 20) * scale),
-                                       int((pane.origin.y + pane.size.height - 20) * scale)))
-                    assert sum(a >= 250 and max(r, g, b) < 150 for r, g, b, a in ink.get_flattened_data()) > 100
-                press_key(63)
-                assert not self.window.ignoresMouseEvents()
-                assert self.body.drawsBackground() and self.body_scroll.drawsBackground()
-                assert self.root.background_alpha == 1.0 and self.window.alphaValue() == 1.0
-                assert self.copy_text() == before
-                assert not self.window_sharing and self.window.sharingType() == A.NSWindowSharingNone
-                self.toggleSharing_(None)
-                assert self.window_sharing and self.window.sharingType() == A.NSWindowSharingReadOnly
-                self.toggleSharing_(None)
-                assert not self.window_sharing and self.window.sharingType() == A.NSWindowSharingNone
-                assert self.copy_text() == before
-                origin = self.window.frame().origin
-                press_key(53)  # 4: left
-                assert self.window.frame().origin.x == origin.x - 50
-                press_key(55)  # 6: right
-                assert self.window.frame().origin.x == origin.x
-                press_key(49)  # 8: up
-                assert self.window.frame().origin.y == origin.y + 50
-                press_key(54)  # 5: down
-                assert self.window.frame().origin.y == origin.y
-                size = self.window.frame().size
-                press_key(51)  # +
-                assert self.window.frame().size.width == size.width + 50
-                press_key(46)  # -
-                assert self.window.frame().size.width == size.width
-                assert self.copy_text() == before
-                press_key(41)
-                assert not self.window.isVisible()
-                self.handle_event({"type": "screen_taken"})
-                assert not self.window.isVisible()
-                press_key(41)
-                assert self.window.isVisible()
-                self.save_view_image(directory / "code.png")
-                self.body.setSelectedRange_((0, 0))
-                request_id = self.coordinator.request_id
-                self.view.selectItemWithTitle_("Conversation")
-                self.refresh_body()
-                assert "Zero would blur" in self.copy_text()
-                self.view.selectItemWithTitle_("Artifact")
-                self.selected_id = response.artifacts[1].id
-                self.refresh_body()
-                assert "@@" in self.copy_text()
-                assert self.coordinator.request_id == request_id
-                for note, view in ((42, "Artifact"), (47, "Conversation"), (52, "Context"),
-                                   (56, "Observed files"), (61, "History")):
-                    press_key(note)
-                    assert str(self.view.titleOfSelectedItem()) == view
-                press_key(42)
-                self.artifacts.selectItemAtIndex_(0)
-                self.chooseArtifact_(None)
-                press_key(45)
-                assert self.current_artifact().id == response.artifacts[1].id
-                press_key(44)
-                assert self.current_artifact().id == response.artifacts[0].id
-                selected = self.current_artifact().id
-                press_key(48)
-                press_key(50)
-                assert self.current_artifact().id == selected and self.output_history.frozen
-                # Synthetic incoming audio cannot starve an in-flight deep response.
-                self.audio = SimpleNamespace(id="synthetic-audio")
-                revision = self.context.revision
-                self.coordinator.active_lanes = {"deep"}
-                self.handle_event(
-                    {
-                        "type": "speech",
-                        "capture_id": "synthetic-audio",
-                        "channel": "system",
-                        "speaker": "other_people",
-                        "text": "What about a generator input?",
-                        "at": time.time(),
-                    }
-                )
-                assert self.context.revision > revision and not self.buffered_context
-                self.coordinator.active_lanes.clear()
-                self.flush_context()
-                assert self.context.observations[-1].text == "What about a generator input?"
-                self.audio = None
-                # Browse the actual native controls while a new valid result arrives.
-                from otsc.models import Artifact, Assistance, LineAnnotation
-                from otsc.scheduler import Job
-
-                self.artifacts.selectItemAtIndex_(0)
-                self.chooseArtifact_(None)
-                held_id = self.output_history.visible.id
-                held_text = self.copy_text()
-                held_summary = str(self.summary.string())
-                snapshot = self.context.snapshot()
-                newer = Assistance(
-                    task=snapshot.goal, summary="Synthetic newer proposal for navigation checks.", conversation=[],
-                    observed_files=[], open_questions=[],
-                    artifacts=[Artifact(id="navigation-example", kind="code", title="Newer synthetic example",
-                                        content="answer = 42\n", language="python", path="", basis="example",
-                                        source_ids=[snapshot.observations[0].id],
-                                        annotations=[LineAnnotation(line=1, explanation="Assign the example value.")],
-                                        nodes=[], edges=[])],
-                )
-                self.coordinator.request_id = "smoke-navigation"
-                self.coordinator.published_lane = -1
-                self.coordinator.active_lanes = {"deep"}
-                self.handle_event({"type": "result", "response": newer, "elapsed": 0,
-                                   "job": Job("smoke-navigation", snapshot, "deep", Cancellation())})
-                assert self.output_history.frozen and self.copy_text() == held_text
-                assert str(self.summary.string()) == held_summary
-                assert self.context.previous_summary == newer.summary
-                assert self.newer.isEnabled() and self.latest.isEnabled()
-                self.save_view_image(directory / "frozen-output.png")
-                self.view.selectItemWithTitle_("History")
-                self.changeView_(self.view)
-                self.artifacts.selectItemAtIndex_(self.history_choices.index(held_id))
-                self.chooseArtifact_(None)
-                assert str(self.view.titleOfSelectedItem()) == "Artifact" and self.copy_text() == held_text
-                press_key(36)
-                press_key(37)
-                assert self.copy_text() == held_text
-                press_key(37)
-                assert self.output_history.frozen and "answer = 42" in self.copy_text()
-                press_key(60)
-                assert not self.output_history.frozen and not self.body.selectedRange().length
-                assert self.displayed_response().summary == newer.summary
-                self.output_history.select(held_id)
-                self.show_selected_output()
-                self.context.set_task_details(["Keep missing data distinct from zero"], ["Use None for empty input"])
-                saved_copy = self.copy_text()
-                saved = self.make_checkpoint()
-                session_path = save_session(saved, directory / "session.json")
-                old_session = self.context.session_id
-                press_key(43)
-                self.restore_session(load_session(session_path))
-                assert self.context.session_id != old_session
-                assert self.copy_text() == saved_copy
-                assert self.output_history.frozen and self.output_history.visible.id == held_id
-                assert self.context.previous_summary == newer.summary
-                assert json.loads(self.context.previous_artifacts)[0]["content"] == "answer = 42\n"
-                assert self.context.constraints == ("Keep missing data distinct from zero",)
-                assert not self.running and self.audio is None
-                assert all(not o.image_path for o in self.context.observations)
-                self.smoke_step = 1
-                self.load_demo(True)
-            elif self.smoke_step == 1 and response.artifacts[0].kind == "diagram":
-                self.window.setContentSize_((1100, 850))
-                self.save_view_image(directory / "diagram.png")
-                assert not self.graph_scroll.isHidden()
-                before = self.copy_text()
-                self.set_click_through(True)
-                assert self.graph.background_alpha == 0.0 and not self.graph.isOpaque()
-                self.save_view_image(directory / "transparent-diagram.png")
-                self.applicationShouldHandleReopen_hasVisibleWindows_(None, True)
-                assert not self.window.ignoresMouseEvents() and self.window.isOpaque()
-                assert self.window.alphaValue() == 1.0 and self.graph.background_alpha == 1.0
-                assert self.body.drawsBackground() and self.summary.drawsBackground()
-                assert self.copy_text() == before
-                self.preferences = Preferences.alloc().initWithController_(self)
-                self.preferences.window.orderOut_(None)
-                assert "planner" in self.preferences.fields and "image" in self.preferences.fields
-                self.smoke_planned_outputs(directory)
-                private_write(
-                    directory / "result.json",
-                    json.dumps(
-                        {
-                            "passed": True,
-                            "checks": [
-                                "parallel synthetic responses",
-                                "clean copy",
-                                "selection retained on resize",
-                                "click-through retains artifact",
-                                "click-through changes background alpha only; text and window alpha remain opaque",
-                                "rendered transparent pane has <=5% background alpha and opaque text pixels",
-                                "Dock recovery restores normal text/diagram backgrounds without changing content",
-                                "window sharing defaults off and toggles without changing the artifact",
-                                "artifact/history selection freezes the exact output while new results arrive",
-                                "Older/Newer browse saved outputs; Latest resumes live display",
-                                "saved browsing position does not roll back the latest model context",
-                                "native diagram",
-                                "arbitrary named JSON renders readably and copies as exact structured data",
-                                "generated PNG fits resized panes and uses MIDI page navigation",
-                                "image arrival updates live memory while preserving the exact pinned output",
-                                "obsolete task image completion cannot publish",
-                                "settings construction",
-                                "collaborator response and observed diff",
-                                "new audio updates context without starving deep work",
-                                "MIDI window controls retain content and hidden state",
-                                "channel-1 keypad: knob history, Enter latest, 8456 arrows, +/- resize, views and artifact/page navigation",
-                                "saved task restores exact artifacts and constraints with capture paused",
-                            ],
-                            "live_capture": False,
-                            "live_api_calls": False,
-                        },
-                        indent=2,
-                    ),
-                )
-                self.quit_(None)
-        except Exception as error:
-            private_write(
-                Path(self.options.smoke_test) / "result.json", json.dumps({"passed": False, "error": str(error)})
-            )
-            import traceback
-
-            traceback.print_exc()
-            self.shutdown()
-            import os
-
-            os._exit(1)
+        smoke_tick(self)
 
 
 def run(options):

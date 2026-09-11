@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from otsc.midi import MidiInput
+from otsc.output_browser import CONTEXT, EVENTS, FILES, REPLIES
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Native controller uses PyObjC")
@@ -19,13 +20,14 @@ class KeypadControllerTests(unittest.TestCase):
         self.ui = SimpleNamespace(
             **{name: Mock() for name in (
                 "helpNow_", "captureNow_", "newTask_", "toggleVisibility_", "olderOutput_", "newerOutput_",
-                "latestOutput_", "toggleRunning_", "togglePin_", "copyClean_", "toggleClickThrough_", "changeView_",
-                "voice_question", "update_navigation_controls", "show_frozen_status", "populate_output_picker",
-                "chooseArtifact_", "advance_page",
+                "latestOutput_", "toggleRunning_", "togglePin_", "copyClean_", "toggleClickThrough_",
+                "voice_question", "update_navigation_controls", "show_frozen_status", "set_debug",
+                "show_selected_output", "advance_page",
             )},
-            view=Mock(), window=Mock(), artifacts=Mock(), output_history=Mock(), graph_scroll=Mock(), body_scroll=Mock(), image_scroll=Mock(),
-            displayed_artifacts=["first", "second", "third"],
+            window=Mock(), browser=Mock(), debug_mode=False, graph_scroll=Mock(), body_scroll=Mock(), image_scroll=Mock(),
         )
+        self.ui.browser.actionable.return_value = "artifact:code"
+        self.ui.browser.state.types = {REPLIES: None}
         self.ui.window.frame.return_value = SimpleNamespace(
             origin=SimpleNamespace(x=100, y=200), size=SimpleNamespace(width=900, height=750),
         )
@@ -70,21 +72,19 @@ class KeypadControllerTests(unittest.TestCase):
         self.press(46)
         self.assertEqual(self.ui.window.setFrame_display_.call_args.args[0][1], (820, 650))
 
-    def test_m_keys_select_the_five_views(self):
-        for note, view in ((42, "Artifact"), (47, "Conversation"), (52, "Context"), (56, "Observed files"), (61, "History")):
+    def test_m_keys_return_to_outputs_or_explicitly_enter_debug_views(self):
+        for note, key, debug in ((42, "artifact:code", False), (47, REPLIES, False), (52, CONTEXT, True), (56, FILES, True), (61, EVENTS, True)):
             self.press(note)
-            self.ui.view.selectItemWithTitle_.assert_called_with(view)
-            self.ui.changeView_.assert_called_with(self.ui.view)
+            self.ui.set_debug.assert_called_with(debug)
+            self.ui.browser.select_type.assert_called_with(key)
+            self.ui.show_selected_output.assert_called()
 
-    def test_slash_and_star_cycle_artifacts_and_use_the_freezing_selection_handler(self):
-        self.ui.artifacts.indexOfSelectedItem.return_value = 0
+    def test_slash_and_star_cycle_types_separately_from_version_history(self):
         self.press(44)
-        self.ui.artifacts.selectItemAtIndex_.assert_called_with(2)
-        self.ui.artifacts.indexOfSelectedItem.return_value = 2
+        self.ui.browser.cycle_type.assert_called_with(-1, debug=False)
         self.press(45)
-        self.ui.artifacts.selectItemAtIndex_.assert_called_with(0)
-        self.ui.view.selectItemWithTitle_.assert_called_with("Artifact")
-        self.ui.chooseArtifact_.assert_called_with(None)
+        self.ui.browser.cycle_type.assert_called_with(1, debug=False)
+        self.ui.show_selected_output.assert_called()
 
     def test_page_keys_freeze_and_scroll_the_active_pane_without_switching_artifacts(self):
         for graph_visible in (False, True):
@@ -101,8 +101,8 @@ class KeypadControllerTests(unittest.TestCase):
                 clip.bounds.return_value.origin.y = 450
                 self.press(50)
                 clip.scrollToPoint_.assert_called_with((0, 450))
-        self.ui.output_history.freeze.assert_called()
-        self.ui.artifacts.selectItemAtIndex_.assert_not_called()
+        self.ui.browser.freeze.assert_called()
+        self.ui.browser.cycle_type.assert_not_called()
         self.ui.advance_page.assert_not_called()
 
 

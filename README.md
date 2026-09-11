@@ -30,15 +30,15 @@ Settings lets you choose separate quick and deep models: Codex CLI, OpenAI, Goog
 
 Continuous screen reading uses **GPT-6 Astra, low reasoning, Fast processing**, at full screenshot resolution. A separate Astra low/Fast worker maintains accumulated context and the observed workspace. These workers use the existing Codex sign-in; the `ocr` and `context_builder` preferences are saved separately from the answer models.
 
-Before each deep answer, a separate planning pass chooses the task's approach, instructions, and named output sections. It reviews the existing plan against the latest evidence: minor clarifications keep the contract, while a different deliverable can change it. Select **Plan** in the artifact menu to read the decision and reason. Plans can define unfamiliar JSON structures as well as text, annotated code, and generated images. Planning and image models are editable in the lower part of Settings.
+Before each deep answer, a separate planning pass chooses the task's approach, instructions, and named output sections. It reviews the existing plan against the latest evidence: minor clarifications keep the contract, while a different deliverable can change it. Enable **Debug** and select **Plan** to read the decision and reason. Plans can define unfamiliar JSON structures as well as text, annotated code, and generated images. Planning and image models are editable in the lower part of Settings.
 
-Automatic follow-ups first check whether another answer is warranted at all. Repeated OCR, inconsequential conversation, and changes to the context builder's wording keep the current output and do not add history entries. New questions, changed requirements, relevant code/errors, or meaningful task progress can release a new quick/deep response. **Help now** always bypasses this gate. The latest decision is visible in **Context**; see [automatic refresh checks](docs/automatic-refresh.md).
+Automatic follow-ups first check whether another answer is warranted at all. Repeated OCR, inconsequential conversation, and changes to the context builder's wording keep the current output and do not add history entries. New questions, changed requirements, relevant code/errors, or meaningful task progress can release a new quick/deep response. **Help now** always bypasses this gate. The latest decision is visible under **Debug → Context**; see [automatic refresh checks](docs/automatic-refresh.md).
 
-1. Describe the task, or let the captured work establish it. You can add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt.
+1. Let the captured work establish the task, or open **Task…** to describe it and add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt. The task editor is collapsed by default.
 2. **Capture now** reads one screen with Astra. **Help now** (Cmd-Return) finishes the current speech chunk and asks from the latest available context while a fresh screen reading runs. If there is no context yet, it waits for that first reading. **Start following** continuously takes a fresh screenshot as soon as the previous OCR call finishes, alongside audio capture and transcription.
-3. Choose an artifact, read the conversation response, or inspect the observed files. **Copy clean** omits teaching notes; **Copy explained** includes them. Generated images copy/export as PNG, structured sections as JSON, and code changes as diffs. Images render in the background after the text arrives; unchanged image briefs reuse their pending or completed image. Old saved diagrams and the synthetic design demo retain SVG support.
-4. Selecting an artifact or **History** freezes the displayed output. **Older** and **Newer** browse saved outputs and keep the pane frozen—even at the newest entry. **Latest** jumps to the newest result and resumes live updates. **Pin** and selecting output text also hold the pane. Cmd-Shift-I toggles click-through with transparent backgrounds and fully opaque text. Clicking the Dock icon restores interaction and the normal backgrounds.
-5. **Sharing: Off** is the default on every launch. The window stays visible while screenshots are taken. **Sharing: On** allows window sharing; for the app's own screenshots it hides the window, waits 10 ms, captures, and restores it before OCR. The 10 ms is the preparation delay, in addition to the screenshot's actual duration.
+3. Choose an output from the always-visible list: code, changes, instructions, images, suggested replies, or other task-defined sections. The selected type is highlighted. Red badges count available versions newer than that type's viewing position. **Copy clean** omits teaching notes; **Copy explained** includes them. Images export as PNG, structured sections as JSON, and changes as diffs.
+4. **Older** and **Newer** browse only the selected type's history and keep the version held—even at the newest entry. **Latest** resumes updates for that type. Every type remembers its own position; changing an explanation does not advance code history. Selecting a type, Pin, and selecting output text hold the pane. Cmd-Shift-I toggles click-through while keeping text and badges opaque; the Dock icon restores interaction.
+5. **Debug** reveals Plan, response details, raw Context, Observed files, and Events. Normal mode shows actionable content and relevant error notices. **Sharing: Off**, available inside Task… or Debug, is the default on every launch. The window stays visible during screenshots. Sharing On hides it for this app's screenshots with a 10 ms preparation delay, then restores it before OCR.
 
 Capture starts only from an explicit control. Screen, microphone, and system audio can be enabled separately. macOS may request Screen & System Audio Recording and Microphone permissions for the launcher/Python application. After changing permissions, relaunch if capture still fails.
 
@@ -60,14 +60,15 @@ The Keychron K0 Max keypad uses **MIDI channel 1** (channel `0` in mido). Only n
 
 | Key | MIDI note | Action |
 |---|---:|---|
-| Knob counterclockwise / clockwise | 36 / 37 | Older / Newer output; remain frozen. |
+| Knob counterclockwise / clockwise | 36 / 37 | Older / Newer version of the selected type; remain held. |
 | Circle | 38 | Help now. |
 | Triangle | 39 | Start / pause following. |
 | Square | 40 | Freeze / unfreeze output. |
 | X | 41 | Show / hide window. |
-| M1 / M2 / M3 / M4 / M5 | 42 / 47 / 52 / 56 / 61 | Artifact / Conversation / Context / Observed files / History. |
+| M1 / M2 | 42 / 47 | Return to actionable outputs / suggested replies (or quick guidance); leave Debug. |
+| M3 / M4 / M5 | 52 / 56 / 61 | Enter Debug and select Context / Observed files / Events. |
 | Num/Clear | 43 | Clear and start a new task. |
-| / and * | 44 / 45 | Previous / next artifact; freeze the output. |
+| / and * | 44 / 45 | Previous / next output type; preserve each type's viewing position. |
 | - and + | 46 / 51 | Shrink / enlarge in 50-pixel steps, respecting minimum size. |
 | 7 and 9 | 48 / 50 | Page up / down in the current pane; freeze it and stop at its edges. |
 | 8 / 4 / 5 / 6 | 49 / 53 / 54 / 55 | Move up / left / down / right in the traditional arrow arrangement. |
@@ -96,7 +97,7 @@ Diagrams remain first-class artifacts. A system-design request produces an image
 
 Quick replies answer the pressing question without generating a second code proposal. Existing artifacts stay visible during those replies; deeper work supplies the annotated code, diff, or drawing. Editor line numbers are separated from source code during OCR, and indentation changes count as meaningful changes.
 
-**History** provides a dropdown of individual outputs. Pick one to inspect its artifacts, or use Older/Newer. The app retains the most recent 24 outputs plus an older output you are holding. New results continue arriving while you browse; they do not replace your selection or become confused with the older response in the model's context. Saved sessions preserve the browsing position separately from the latest task context.
+Each named output has its own history, with up to 24 recent versions plus an older held version. Red badges count versions newer than its cursor; a never-opened type counts all its retained versions. Completed images add image versions without duplicating code history. Pending renders do not count as available versions. Debug Events retains the raw recent response timeline. Saved sessions preserve all per-type cursors and badges separately from the latest task context. See [output navigation](docs/output-navigation.md).
 
 Optional file-cache updates are validated separately from the answer. Unconfirmed entries are excluded without discarding useful assistance or creating a misleading diff. Code with missing or misaligned explanations receives at most one bounded annotation-only repair; the code itself is preserved. See the [validation fix and replay results](docs/validation-fix.md).
 
