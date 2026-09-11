@@ -1,14 +1,12 @@
 """Read bounded source snapshots from an explicitly selected folder; never edit it."""
 
-import difflib
 import json
 import os
-import re
 import stat
 import subprocess
 from pathlib import Path
 
-from otsc.models import Assistance, LineAnnotation, patch_added_lines, safe_relative_path
+from otsc.models import Assistance, LineAnnotation, safe_relative_path
 from otsc.privacy import private_write, redact
 
 SKIP_DIRS = {
@@ -140,89 +138,78 @@ def materialize_snapshot(directory: Path, files: dict[str, str]):
 
 
 def derive_patches(response: Assistance, files: dict[str, str]) -> Assistance:
-    """The host computes verified diffs from complete replacements and the exact input snapshot."""
-    fragment_diffs = []
-    for artifact in list(response.artifacts):
+    """Call the diff renderer with a verified file or one source-backed excerpt."""
+    from otsc.diff_rendering import render_diff
+    from otsc.models import Artifact, DiffContext
+
+    companions = []
+    for index, artifact in enumerate(list(response.artifacts)):
         if artifact.kind == "patch" and artifact.basis == "verified_file":
-            raise ValueError("Return complete annotated replacement code; the app computes the verified diff")
-        if artifact.kind == "code" and artifact.basis == "observed_fragment":
-            fragment = next(
-                (
-                    f
-                    for f in response.observed_files
-                    if f.path == artifact.path and set(f.source_ids) <= set(artifact.source_ids)
-                ),
-                None,
-            )
-            if fragment and fragment.content != artifact.content:
-                before = fragment.content.splitlines(keepends=True)
-                after = artifact.content.splitlines(keepends=True)
-                raw = difflib.unified_diff(before, after, fromfile="a/" + fragment.path, tofile="b/" + fragment.path)
-                excerpt = "".join(
-                    line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in raw
-                )
-                offset = (fragment.first_line or 1) - 1
-                if offset:
-                    excerpt = re.sub(
-                        r"(?m)^@@ -(\d+)(,\d+)? \+(\d+)(,\d+)? @@",
-                        lambda m: f"@@ -{int(m[1]) + offset}{m[2] or ''} +{int(m[3]) + offset}{m[4] or ''} @@",
-                        excerpt,
-                    )
-                notes = {n.line + offset: n.explanation for n in artifact.annotations}
-                from otsc.models import Artifact
-
-                fragment_diffs.append(
-                    Artifact(
-                        id=artifact.id + "-observed-diff",
-                        kind="patch",
-                        title="Changes to observed excerpt"
-                        + (" (excerpt-relative lines)" if fragment.first_line is None else ""),
-                        content=excerpt,
-                        language=artifact.language,
-                        path=artifact.path,
-                        basis="observed_fragment",
-                        source_ids=artifact.source_ids,
-                        annotations=[
-                            LineAnnotation(line=i, explanation=notes[i])
-                            for i in sorted(patch_added_lines(excerpt))
-                            if i in notes
-                        ],
-                        nodes=[],
-                        edges=[],
-                    )
-                )
-        if artifact.kind != "code" or artifact.basis != "verified_file":
+            raise ValueError("Return complete replacement code; the host computes the verified diff")
+        if artifact.kind != "code" or artifact.basis not in {"verified_file", "observed_fragment"}:
             continue
-        if artifact.path not in files:
-            raise ValueError("Replacement refers to a file outside the verified snapshot")
-        before, after = files[artifact.path], artifact.content
-        if before == after:
-            artifact.basis = "example"
+        first_line = 1
+        if artifact.basis == "verified_file":
+            if artifact.path not in files:
+                raise ValueError("Replacement refers to a file outside the verified snapshot")
+            before = files[artifact.path]
+        else:
+            matches = [fragment for fragment in response.observed_files if fragment.path == artifact.path
+                       and set(fragment.source_ids) <= set(artifact.source_ids)]
+            distinct = {(fragment.content, fragment.first_line) for fragment in matches}
+            if len(distinct) != 1:
+                continue  # Never guess which of several partial regions is the base.
+            fragment = matches[0]
+            before, first_line = fragment.content, fragment.first_line
+        if before == artifact.content:
             continue
-        # A final newline avoids malformed concatenated diff headers/lines.
-        before_lines = before.splitlines(keepends=True)
-        after_lines = after.splitlines(keepends=True)
-        raw = list(
-            difflib.unified_diff(before_lines, after_lines, fromfile="a/" + artifact.path, tofile="b/" + artifact.path)
-        )
-        patch = "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in raw)
-        notes = {n.line: n.explanation for n in artifact.annotations}
-        replacement = artifact.model_dump()
-        replacement.update(
-            kind="patch",
-            content=patch,
-            annotations=[
-                LineAnnotation(line=i, explanation=notes[i]).model_dump()
-                for i in sorted(patch_added_lines(patch))
-                if i in notes
-            ],
-        )
-        from otsc.models import Artifact
-
-        artifact_index = response.artifacts.index(artifact)
-        response.artifacts[artifact_index] = Artifact.model_validate(replacement)
-    response.artifacts.extend(fragment_diffs)
+        patch, document = render_diff(before, artifact.content, path=artifact.path, first_line=first_line)
+        offset = (first_line or 1) - 1
+        notes = {note.line + offset: note.explanation for note in artifact.annotations}
+        added = {row.new_line for row in document.rows if row.kind == "add"}
+        data = artifact.model_dump()
+        data.update(kind="patch", content=patch,
+                    annotations=[LineAnnotation(line=line, explanation=notes[line]).model_dump()
+                                 for line in sorted(added) if line in notes],
+                    diff_context=DiffContext(before=before, after=artifact.content, first_line=first_line,
+                                             annotations=artifact.annotations).model_dump())
+        if artifact.basis == "observed_fragment":
+            data.update(id=artifact.id + "-observed-diff", title="Changes to observed excerpt" +
+                        (" (excerpt-relative lines)" if first_line is None else ""))
+            companions.append(Artifact.model_validate(data))
+        else:
+            response.artifacts[index] = Artifact.model_validate(data)
+    response.artifacts.extend(companions)
     return response
+
+
+def cached_diff_base(snapshot, artifact):
+    """Resolve a literal cached excerpt without treating an inferred repo as a real one."""
+    from otsc.models import ObservedFile
+
+    candidates = []
+    try:
+        workspace = json.loads(snapshot.workspace)
+        for record in workspace:
+            if record.get("path") != artifact.path:
+                continue
+            for raw in record.get("fragments", []):
+                try:
+                    fragment = ObservedFile.model_validate(raw)
+                    if fragment.path != artifact.path:
+                        continue
+                    Assistance(task="", summary="", artifacts=[], conversation=[], observed_files=[fragment], open_questions=[]).validate_sources(
+                        snapshot.observations, json.loads(snapshot.verified_files))
+                    candidates.append(fragment)
+                except ValueError:
+                    continue
+    except (ValueError, TypeError, AttributeError):
+        return None
+    cited = [fragment for fragment in candidates if set(fragment.source_ids) <= set(artifact.source_ids)]
+    candidates = cited or candidates
+    if len({(fragment.content, fragment.first_line) for fragment in candidates}) != 1:
+        return None
+    return candidates[-1] if candidates else None
 
 
 def verified_from_snapshot(snapshot):

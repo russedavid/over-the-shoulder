@@ -24,7 +24,7 @@ Preserve MIDI keypad support using the channel-1 layout in README. Notes 36/37 b
 
 Click-through makes pane backgrounds transparent (at most 5% opacity), while output text and diagram content stay opaque. Keep the window alpha at 1.0; do not fade the whole window. Restore normal backgrounds and controls when click-through is disabled or the Dock icon is used.
 
-Every generated code artifact needs line-by-line teaching annotations and a separate clean representation. Explanatory annotations must not be silently inserted into the user's code or diffs. Preserve comments that belong to the actual source.
+Every generated code artifact needs line-by-line teaching annotations and a separate clean representation. Render teaching notes as ordinary language comments, with source numbers in a separate gutter. Keep them outside protected multiline constructs. Copy clean/exported patches must never contain synthetic teaching notes. Preserve comments that belong to actual source. Changes should use the source-backed diff renderer, old/new line numbers, and exact Current/Proposed views. Never invent a baseline or absolute line positions for an unknown excerpt.
 
 Observed screen/OCR fragments, spoken claims, inferred hypotheses, and verified local files are different evidence. Preserve provenance, completeness, and version. Never present a guessed complete filesystem as an observed one. Suggestions against a partial observation must say so.
 

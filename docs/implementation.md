@@ -12,6 +12,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 | Shared storage envelope and quick-response instructions | `otsc/models.py`, `otsc/prompts.py` |
 | Generated PNGs, image revisions, bounded rendering worker | `otsc/images.py` |
 | Independent component validation and bounded annotation repair | `otsc/delivery.py` |
+| Conventional code comments, numbered diff tool and native code view | `otsc/code_rendering.py`, `otsc/diff_rendering.py`, `otsc/code_view.py` |
 | Five-minute observations, partial filesystem, remembered artifacts/questions | `otsc/context.py` |
 | Full-resolution Astra low/Fast screen reading | `otsc/perception.py` |
 | Background source-linked memory and observed workspace updates | `otsc/context_builder.py` |
@@ -48,6 +49,8 @@ The [task-planning report](task-planning.md) records dynamic output contracts, o
 The later [automatic refresh change](automatic-refresh.md) suppresses answer generation when new OCR/audio evidence adds nothing substantive. Memory-only revisions do not trigger a review; the existing planner can retain the prior answer, and a final content comparison prevents citation/Plan-metadata churn from creating duplicate history. Explicit Help now bypasses this gate. Seven live synthetic judgment checks covered both harmless repetition and consequential small changes.
 
 The September 11 [output-navigation change](output-navigation.md) makes actionable output the default, replaces dropdowns with a persistent highlighted type list, and adds per-type histories and red newer-version badges. Debug reveals internal planning/context/events. A changed explanation or completed image no longer advances code history. The 155-test suite and native preservation checks pass.
+
+The [code/diff renderer](code-and-diff-rendering.md) replaces bare annotation prose with ordinary language comments. Changes use colored Old/New rows and retain exact Current/Proposed text. The 170-test suite and native checks pass; a live cached-excerpt edit preserved its line-40 origin and passed seven restricted-AST behavior checks.
 
 ## What has been verified
 

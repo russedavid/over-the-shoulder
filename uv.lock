@@ -568,6 +568,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "pillow" },
     { name = "pydantic" },
+    { name = "pygments" },
 ]
 
 [package.optional-dependencies]
@@ -608,6 +609,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11,<13" },
     { name = "pyautogui", marker = "extra == 'mac'", specifier = ">=0.9.54,<1" },
     { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "pygments", specifier = ">=2.19,<3" },
     { name = "pyobjc-framework-cocoa", marker = "extra == 'mac'", specifier = ">=11,<13" },
     { name = "pyobjc-framework-coreaudio", marker = "extra == 'mac'", specifier = ">=11,<13" },
     { name = "pyobjc-framework-coremedia", marker = "extra == 'mac'", specifier = ">=11,<13" },

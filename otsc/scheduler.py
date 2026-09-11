@@ -78,7 +78,7 @@ def answer_fingerprint(response, observations=()):
     for artifact in data.get("artifacts", []):
         if artifact.get("id") == "_assistance_plan":
             continue
-        item = {key: value for key, value in artifact.items() if key != "source_ids"}
+        item = {key: value for key, value in artifact.items() if key not in {"source_ids", "diff_context"}}
         if item.get("kind") in {"structured", "image"}:
             try:
                 item["content"] = json.loads(item["content"])

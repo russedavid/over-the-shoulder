@@ -36,7 +36,7 @@ Automatic follow-ups first check whether another answer is warranted at all. Rep
 
 1. Let the captured work establish the task, or open **Task…** to describe it and add typed context as yourself, another person, an uncertain speaker, or a screen/code excerpt. The task editor is collapsed by default.
 2. **Capture now** reads one screen with Astra. **Help now** (Cmd-Return) finishes the current speech chunk and asks from the latest available context while a fresh screen reading runs. If there is no context yet, it waits for that first reading. **Start following** continuously takes a fresh screenshot as soon as the previous OCR call finishes, alongside audio capture and transcription.
-3. Choose an output from the always-visible list: code, changes, instructions, images, suggested replies, or other task-defined sections. The selected type is highlighted. Red badges count available versions newer than that type's viewing position. **Copy clean** omits teaching notes; **Copy explained** includes them. Images export as PNG, structured sections as JSON, and changes as diffs.
+3. Choose an output from the always-visible list: code, changes, instructions, images, suggested replies, or other task-defined sections. The selected type is highlighted. Red badges count available versions newer than that type's viewing position. **Copy clean** omits teaching notes; **Copy with comments** includes them. Images export as PNG, structured sections as JSON, and changes as diffs.
 4. **Older** and **Newer** browse only the selected type's history and keep the version held—even at the newest entry. **Latest** resumes updates for that type. Every type remembers its own position; changing an explanation does not advance code history. Selecting a type, Pin, and selecting output text hold the pane. Cmd-Shift-I toggles click-through while keeping text and badges opaque; the Dock icon restores interaction.
 5. **Debug** reveals Plan, response details, raw Context, Observed files, and Events. Normal mode shows actionable content and relevant error notices. **Sharing: Off**, available inside Task… or Debug, is the default on every launch. The window stays visible during screenshots. Sharing On hides it for this app's screenshots with a 10 ms preparation delay, then restores it before OCR.
 
@@ -53,6 +53,8 @@ uv sync --python 3.13 --extra mac --extra local-asr
 ```
 
 Local transcription loads its model on first use and may download model weights. No model download or audio transcription starts during ordinary app launch.
+
+Code is displayed with ordinary language comments and a separate source-line gutter. **Changes** opens a colored diff with Old/New line numbers and **Current / Proposed** views. **Copy patch** exports only real edits; **Copy with comments** copies the proposed code with teaching comments. See [code and diff rendering](docs/code-and-diff-rendering.md).
 
 ## MIDI controls
 

@@ -1,5 +1,6 @@
 """Owned-fixture checks for the native UI. No model, screen, or audio capture calls."""
 
+import ast
 import io
 import json
 import queue
@@ -67,6 +68,9 @@ def smoke_tick(c):
                     "Debug reveals plan/context/files/events; M1/M2 return to actionable output",
                     "MIDI 8456 movement, +/- resize, slash/star type selection and 7/9 paging",
                     "clean code and teaching annotations remain separate",
+                    "ordinary language comments, syntax coloring, and separate source line gutter",
+                    "colored diff rows with old/new numbers and Current/Proposed views",
+                    "copyable patch and commented proposal preserve original code semantics",
                     "text selection and scroll survive resize",
                     "click-through keeps pane backgrounds <=5% and text/badges opaque",
                     "Dock recovery restores interaction and normal backgrounds",
@@ -105,15 +109,16 @@ def check_code(c, directory, original):
     assert not c.debug_mode and c.goal.isHidden() and c.input_scroll.isHidden() and c.status.isHidden()
     assert not hasattr(c, "view") and not hasattr(c, "artifacts")
     assert c.browser.active_key == code_key
-    assert "INTERNAL TASK" not in str(c.body.string()) and "internal_planning" not in str(c.body.string())
+    assert "INTERNAL TASK" not in str(c.output_text().string()) and "internal_planning" not in str(c.output_text().string())
     assert artifact_key("_assistance_plan") not in {row[0] for row in c.browser.rows()}
     assert c.copy_text() == code.content
     assert c.copy_text(explained=True) != c.copy_text()
+    assert "# " in str(c.output_text().string()) and "→" not in str(c.output_text().string())
     clean = c.copy_text()
-    c.body.setSelectedRange_((5, 8))
+    c.output_text().setSelectedRange_((5, 8))
     c.window.setContentSize_((1000, 740))
-    assert c.body.selectedRange().length == 8 and c.copy_text() == clean
-    c.body.setSelectedRange_((0, 0))
+    assert c.output_text().selectedRange().length == 8 and c.copy_text() == clean
+    c.output_text().setSelectedRange_((0, 0))
     c.browser.select_type(code_key)
     c.show_selected_output()
     held = c.browser.visible.id
@@ -128,6 +133,13 @@ def check_code(c, directory, original):
     assert c.browser.state.types[artifact_key(notes.id)].newer_count == 2
     assert c.type_buttons[code_key].output_selected and c.type_buttons[code_key].newer_count == 1
     c.save_view_image(directory / "actionable-output.png")
+    if hasattr(c, "code_scroll"):
+        private_write(directory / "code-geometry.json", json.dumps({
+            "scroll_frame": str(c.code_scroll.frame()), "clip_frame": str(c.code_scroll.contentView().frame()),
+            "clip_bounds": str(c.code_scroll.contentView().bounds()), "text_frame": str(c.code_text.frame()),
+            "text_bounds": str(c.code_text.bounds()), "text_origin": str(c.code_text.textContainerOrigin()),
+            "ruler_frame": str(c.code_scroll.verticalRulerView().frame()),
+        }, indent=2))
     with Image.open(directory / "actionable-output.png").convert("RGBA") as picture:
         row = c.type_buttons[artifact_key(notes.id)].frame()
         sidebar = c.types_scroll.frame()
@@ -197,11 +209,14 @@ def check_code(c, directory, original):
     c.browser.move(-1)
     c.show_selected_output()
     c.set_click_through(True)
-    assert c.window.alphaValue() == 1 and not c.body.drawsBackground()
+    assert c.window.alphaValue() == 1 and not c.output_text().drawsBackground()
     c.save_view_image(directory / "transparent-output.png")
     check_pixels(c, directory / "transparent-output.png")
     c.applicationShouldHandleReopen_hasVisibleWindows_(None, True)
-    assert not c.window.ignoresMouseEvents() and c.body.drawsBackground() and c.window.alphaValue() == 1
+    assert not c.window.ignoresMouseEvents() and c.output_text().drawsBackground() and c.window.alphaValue() == 1
+    check_diff(c, directory, original)
+    c.browser.select_type(code_key)
+    c.show_selected_output()
     check_image(c, directory, current, code_key, source)
     saved_key, saved_cursor = c.browser.active_key, c.browser.visible.id
     saved_counts = {key: stream.newer_count for key, stream in c.browser.state.types.items()}
@@ -218,7 +233,7 @@ def check_code(c, directory, original):
 def check_pixels(c, path):
     with Image.open(path).convert("RGBA") as picture:
         scale = picture.width / c.root.bounds().size.width
-        box = c.body_scroll.frame()
+        box = c.output_scroll().frame()
         alpha = picture.getpixel((int((box.origin.x + box.size.width - 30) * scale), int((box.origin.y + box.size.height - 24) * scale)))[3]
         assert alpha <= 14, f"Pane background alpha is {alpha}"
         crop = picture.crop((int((box.origin.x + 10) * scale), int((box.origin.y + 10) * scale),
@@ -228,6 +243,39 @@ def check_pixels(c, path):
         crop = picture.crop((int(sidebar.origin.x * scale), int(sidebar.origin.y * scale),
                              int((sidebar.origin.x + sidebar.size.width) * scale), int((sidebar.origin.y + sidebar.size.height) * scale)))
         assert sum(a > 245 and r > 150 and g < 100 and b < 100 for r, g, b, a in crop.getdata()) > 40
+
+
+def check_diff(c, directory, original):
+    patch = next(artifact for artifact in original.artifacts if artifact.kind == "patch")
+    c.browser.select_type(artifact_key(patch.id))
+    c.show_selected_output()
+    assert not c.code_scroll.isHidden() and not c.diff_selector.isHidden()
+    assert c.copy_text() == patch.content
+    assert c.code_text.code_document.diff
+    assert c.code_text.code_document.added and c.code_text.code_document.removed
+    assert c.code_scroll.contentView().frame().origin.x >= c.code_scroll.verticalRulerView().frame().size.width
+    assert all(row.old_line is None for row in c.code_text.code_document.rows if row.kind == "add")
+    assert all(row.new_line is None for row in c.code_text.code_document.rows if row.kind == "remove")
+    before = c.context.previous_answer
+    c.save_view_image(directory / "diff-output.png")
+    c.diff_selector.setSelectedSegment_(1)
+    c.changeDiffView_(c.diff_selector)
+    assert c.copy_text() == patch.diff_context.before
+    assert not c.annotation.isEnabled()
+    c.save_view_image(directory / "current-code.png")
+    c.diff_selector.setSelectedSegment_(2)
+    c.changeDiffView_(c.diff_selector)
+    assert c.copy_text() == patch.diff_context.after
+    assert ast.dump(ast.parse(c.copy_text(explained=True))) == ast.dump(ast.parse(patch.diff_context.after))
+    assert "# " in str(c.code_text.string())
+    assert c.context.previous_answer == before
+    c.save_view_image(directory / "proposed-code.png")
+    c.diff_selector.setSelectedSegment_(0)
+    c.changeDiffView_(c.diff_selector)
+    c.set_click_through(True)
+    c.save_view_image(directory / "transparent-diff.png")
+    assert c.window.alphaValue() == 1
+    c.set_click_through(False)
 
 
 def check_image(c, directory, current, code_key, source):

@@ -225,12 +225,13 @@ class ContextStore:
                     self.task_plan = json.dumps(response._task_plan, ensure_ascii=False)
                 # Preserve the last substantive answer, including diagram nodes and
                 # conversation replies. A quick acknowledgment must not replace it.
-                self.previous_answer = json.dumps(response.model_dump(exclude={"observed_files"}), ensure_ascii=False)
+                self.previous_answer = json.dumps(response.model_dump(exclude={"observed_files": True,
+                    "artifacts": {"__all__": {"diff_context"}}}), ensure_ascii=False)
             else:
                 self.open_questions = tuple(dict.fromkeys([*self.open_questions, *response.open_questions]))[-20:]
             artifacts = []
             for item in response.artifacts:
-                record = item.model_dump(exclude={"annotations"})
+                record = item.model_dump(exclude={"annotations", "diff_context"})
                 if len(json.dumps([*artifacts, record])) < 30000:
                     artifacts.append(record)
             if artifacts:

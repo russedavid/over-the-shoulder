@@ -12,6 +12,7 @@ dependencies = [
     "httpx>=0.28,<1",
     "Pillow>=11,<13",
     "jsonschema>=4.23,<5",
+    "pygments>=2.19,<3",
 ]
 
 [project.optional-dependencies]

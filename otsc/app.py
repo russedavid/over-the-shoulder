@@ -14,10 +14,13 @@ from Foundation import NSMakeRect, NSObject, NSTimer
 from PyObjCTools import AppHelper
 
 from otsc.capture import AudioCapture, ScreenCapture
+from otsc.code_rendering import artifact_document, commented_code, language_info
+from otsc.code_view import code_scroll
 from otsc.context import ContextStore
 from otsc.context_builder import ContextBuilder
 from otsc.demo import DemoProvider, seed_demo
 from otsc.diagram import diagram_layout, diagram_svg, edge_geometry
+from otsc.diff_rendering import CodeDocument, CodeRow
 from otsc.images import ImageCoordinator, image_path, resolve_image, update_image_memory
 from otsc.midi import MidiInput
 from otsc.native import (
@@ -137,6 +140,7 @@ class Controller(NSObject):
         self.debug_mode = False
         self.composer_open = False
         self.notice_text = ""
+        self.code_render_error = ""
         self.type_buttons = {}
         self.image_worker = ImageCoordinator(self.events, lambda: self.settings.image, self.credentials, trace=self.trace)
         self.history_choices = []
@@ -276,7 +280,7 @@ class Controller(NSObject):
         self.activity = label(self.root, "Paused", size=12)
         self.notice_label = label(self.root, "", size=12)
         self.notice_label.setTextColor_(color("a12d29"))
-        self.annotation = button(self.root, "Explain each line", self, "changeView:", checkbox=True)
+        self.annotation = button(self.root, "Comments", self, "changeView:", checkbox=True)
         self.annotation.setState_(1)
         self.pin = button(self.root, "Pin", self, "togglePin:")
         self.older = button(self.root, "Older", self, "olderOutput:")
@@ -286,9 +290,23 @@ class Controller(NSObject):
         self.newer.setToolTip_("Next version of the selected output type; keep it held.")
         self.latest.setToolTip_("Show the latest version and resume updates for this type.")
         self.copy = button(self.root, "Copy clean", self, "copyClean:")
-        self.copy_notes = button(self.root, "Copy explained", self, "copyExplained:")
+        self.copy_notes = button(self.root, "Copy with comments", self, "copyExplained:")
         self.export = button(self.root, "Export…", self, "exportArtifact:")
         self.body_scroll, self.body = scroll_text(self.root, monospace=True)
+        self.code_scroll, self.code_text = code_scroll(self.root)
+        self.code_scroll.setHidden_(True)
+        self.code_info = label(self.root, "", size=12)
+        self.code_info.setHidden_(True)
+        self.diff_selector = A.NSSegmentedControl.alloc().initWithFrame_(NSMakeRect(0, 0, 280, 28))
+        self.diff_selector.setSegmentCount_(3)
+        for index, title in enumerate(("Changes", "Current", "Proposed")):
+            self.diff_selector.setLabel_forSegment_(title, index)
+            self.diff_selector.setWidth_forSegment_(90, index)
+        self.diff_selector.setSelectedSegment_(0)
+        self.diff_selector.setTarget_(self)
+        self.diff_selector.setAction_("changeDiffView:")
+        self.root.addSubview_(self.diff_selector)
+        self.diff_selector.setHidden_(True)
         self.graph_scroll = A.NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 400, 300))
         self.graph_scroll.setHasVerticalScroller_(True)
         self.graph_scroll.setAutohidesScrollers_(True)
@@ -404,6 +422,12 @@ class Controller(NSObject):
         frame(self.notice_label, main_x, top + 32, main_w, 40)
         for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
             frame(scroll, main_x, top + 38 + notice_height, main_w, bottom - top - 38 - notice_height)
+        is_patch = bool(self.current_artifact() and self.current_artifact().kind == "patch")
+        code_top = top + 38 + notice_height
+        frame(self.diff_selector, main_x, code_top, 280, 28)
+        frame(self.code_info, main_x, code_top + (32 if is_patch else 0), main_w, 28)
+        toolbar = 62 if is_patch else 30
+        frame(self.code_scroll, main_x, code_top + toolbar, main_w, bottom - code_top - toolbar)
         picture = self.image_view.image()
         if picture:
             width = self.image_scroll.contentSize().width
@@ -415,7 +439,7 @@ class Controller(NSObject):
             _, height = diagram_layout(self.graph.artifact, width)
             self.graph.setFrameSize_((width, height + 240))
             self.graph.setNeedsDisplay_(True)
-        for control, offset, width in [(self.pin, 0, 72), (self.copy, 76, 100), (self.copy_notes, 180, 130), (self.export, 314, 88)]:
+        for control, offset, width in [(self.pin, 0, 72), (self.copy, 76, 100), (self.copy_notes, 180, 155), (self.export, 339, 88)]:
             frame(control, main_x + offset, bottom + 10, width, 30)
         frame(self.version_label, main_x, bottom + 52, max(90, main_w - 260), 25)
         frame(self.older, w - 258, bottom + 48, 76, 30)
@@ -823,7 +847,7 @@ class Controller(NSObject):
                 and not self.browser.frozen
                 and self.browser.active_key in {"", GUIDANCE}
                 and self.browser.visible is None
-                and not self.body.selectedRange().length
+                and not self.output_text().selectedRange().length
                 and self.coordinator.published_lane < 1
                 and self.context.task_revision == self.coordinator.last_requested_task_revision
             ):
@@ -842,7 +866,7 @@ class Controller(NSObject):
                 self.refresh_passive_views()
                 return
             if kind == "result":
-                if self.body.selectedRange().length:
+                if self.output_text().selectedRange().length:
                     self.browser.freeze()
                 job = event["job"]
                 entry = self.output_history.append(
@@ -878,7 +902,7 @@ class Controller(NSObject):
         artifacts, changed = resolve_image(latest.artifacts, job, event.get("asset"), event.get("error"))
         if not changed:
             return
-        if self.body.selectedRange().length:
+        if self.output_text().selectedRange().length:
             self.browser.freeze()
         # Publish a new immutable display entry. Older/pinned entries stay exact.
         response = latest.response.model_copy(deep=True)
@@ -974,7 +998,7 @@ class Controller(NSObject):
 
     @objc.python_method
     def refresh_passive_views(self):
-        if self.body.selectedRange().length:
+        if self.output_text().selectedRange().length:
             self.browser.freeze()
             self.update_navigation_controls()
         self.update_activity()
@@ -1002,12 +1026,21 @@ class Controller(NSObject):
         self.pin.setEnabled_(bool(count))
         self.pin.setTitle_("Unpin" if self.browser.frozen else "Pin")
         self.version_label.setStringValue_(f"{index + 1} / {count} · {'Held' if self.browser.frozen else 'Live'}" if index >= 0 else "")
-        self.copy.setEnabled_(self.browser.visible is not None or self.browser.active_key in LIVE_DEBUG)
-        self.export.setEnabled_(self.browser.visible is not None)
+        render_ok = not self.code_render_error
+        self.copy.setEnabled_(render_ok and (self.browser.visible is not None or self.browser.active_key in LIVE_DEBUG))
+        self.export.setEnabled_(render_ok and self.browser.visible is not None)
         artifact = self.current_artifact()
         code = bool(artifact and artifact.kind in {"code", "patch"})
         self.annotation.setHidden_(not code)
-        self.copy_notes.setHidden_(not code)
+        mode = stream.code_view if stream else "diff"
+        style = language_info(artifact.language, artifact.path)[1] if code else None
+        current_view = bool(artifact and artifact.kind == "patch" and mode == "current")
+        self.annotation.setEnabled_(bool(style) and not current_view)
+        self.annotation.setToolTip_("Show teaching notes as ordinary source comments. Gutter numbers refer to source lines."
+                                   if style else "This language has no supported comment syntax; clean source is preserved.")
+        self.copy_notes.setHidden_(not code or current_view)
+        self.copy_notes.setEnabled_(render_ok and bool(style) and bool(artifact and (artifact.kind == "code" or artifact.diff_context)))
+        self.copy.setTitle_("Copy patch" if artifact and artifact.kind == "patch" and mode == "diff" else "Copy clean")
         self.update_activity()
 
     @objc.python_method
@@ -1042,6 +1075,7 @@ class Controller(NSObject):
         stream = self.browser.current
         response = self.displayed_response()
         artifact = self.current_artifact()
+        self.code_render_error = ""
         self.output_title.setStringValue_(stream.label if stream else LIVE_DEBUG.get(key, "Ready"))
         show_diagram = bool(artifact and artifact.kind == "diagram")
         show_image = False
@@ -1062,7 +1096,14 @@ class Controller(NSObject):
                 image_error = "Image unavailable. " + str(error)
         self.graph_scroll.setHidden_(not show_diagram)
         self.image_scroll.setHidden_(not show_image)
-        self.body_scroll.setHidden_(show_diagram or show_image)
+        show_code = bool(artifact and artifact.kind in {"code", "patch"})
+        self.code_scroll.setHidden_(not show_code)
+        self.code_info.setHidden_(not show_code)
+        self.diff_selector.setHidden_(not (show_code and artifact.kind == "patch"))
+        self.body_scroll.setHidden_(show_diagram or show_image or show_code)
+        if show_code:
+            self.render_code(artifact)
+            return
         if key == CONTEXT and self.debug_mode:
             review = self.coordinator.last_refresh_reason
             text = ("Latest answer-refresh decision\n" + review + "\n\n" if review else "")
@@ -1111,6 +1152,47 @@ class Controller(NSObject):
         retain_text(self.body, text)
         self.body.setFont_(A.NSFont.monospacedSystemFontOfSize_weight_(14, A.NSFontWeightRegular) if artifact and artifact.kind in {"code", "patch"} or self.debug_mode else A.NSFont.systemFontOfSize_(15))
 
+    @objc.python_method
+    def render_code(self, artifact):
+        stream = self.browser.current
+        mode = stream.code_view if stream else "diff"
+        if artifact.kind == "patch" and not artifact.diff_context:
+            mode = "diff"
+            if stream:
+                stream.code_view = mode
+        self.diff_selector.setSelectedSegment_(("diff", "current", "proposed").index(mode))
+        for index in (1, 2):
+            self.diff_selector.setEnabled_forSegment_(artifact.diff_context is not None, index)
+        try:
+            document = artifact_document(artifact, comments=bool(self.annotation.state()), view=mode)
+        except ValueError as error:
+            self.code_render_error = str(error)
+            document = CodeDocument(rows=[CodeRow("This saved diff cannot be rendered safely: " + str(error), "note")])
+        self.code_text.set_document(document, artifact.language, artifact.path)
+        basis = {"example": "Example", "observed_fragment": "Observed excerpt", "verified_file": "Selected project snapshot", "discussion": "Suggested code"}[artifact.basis]
+        if artifact.basis == "verified_file" and digest(artifact.model_dump()) in self.restored_artifact_keys:
+            current = self.context.verified_files.get(artifact.path)
+            original = self.coordinator.artifact_bases.get(digest(artifact.model_dump()), {}).get("base_hash")
+            basis = "Saved snapshot · base confirmed" if current is not None and digest(current) == original else "Saved snapshot · current base unconfirmed"
+        numbering = "Old / New lines" if document.diff else "Source lines"
+        if document.first_line is None:
+            numbering += " · excerpt-relative"
+        info = (artifact.path + " · " if artifact.path else "") + basis + " · " + numbering
+        if document.diff:
+            info += f" · +{document.added} −{document.removed}"
+        if self.debug_mode:
+            info += " · Sources: " + ", ".join(artifact.source_ids)
+        self.code_info.setStringValue_(info)
+        self.code_info.setToolTip_("Teaching comments have no source line number and are not included in the clean patch.")
+        self.relayout()
+
+    def changeDiffView_(self, sender):
+        stream = self.browser.current
+        if stream:
+            stream.code_view = ("diff", "current", "proposed")[sender.selectedSegment()]
+            self.browser.freeze()
+            self.show_selected_output()
+
     def changeView_(self, sender):
         # Kept as the annotation checkbox action; selecting a type is explicit.
         self.refresh_body()
@@ -1151,10 +1233,11 @@ class Controller(NSObject):
     @objc.python_method
     def show_selected_output(self):
         self.body.setSelectedRange_((0, 0))
-        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+        self.code_text.setSelectedRange_((0, 0))
+        for scroll in (self.body_scroll, self.code_scroll, self.graph_scroll, self.image_scroll):
             scroll.contentView().scrollToPoint_((0, 0))
         self.render_response()
-        for scroll in (self.body_scroll, self.graph_scroll, self.image_scroll):
+        for scroll in (self.body_scroll, self.code_scroll, self.graph_scroll, self.image_scroll):
             scroll.reflectScrolledClipView_(scroll.contentView())
 
     def olderOutput_(self, sender):
@@ -1173,6 +1256,15 @@ class Controller(NSObject):
     def copy_text(self, explained=False):
         artifact = self.current_artifact()
         if artifact:
+            if artifact.kind == "patch" and artifact.diff_context:
+                if explained:
+                    return commented_code(artifact.diff_context.after, artifact.diff_context.annotations,
+                                          language=artifact.language, path=artifact.path, first_line=artifact.diff_context.first_line)
+                mode = self.browser.current.code_view
+                if mode == "current":
+                    return artifact.diff_context.before
+                if mode == "proposed":
+                    return artifact.diff_context.after
             return artifact.annotated_text() if explained else artifact.clean_text()
         if self.browser.active_key == REPLIES:
             return self.reply_text(debug=explained)
@@ -1203,7 +1295,7 @@ class Controller(NSObject):
         pasteboard = A.NSPasteboard.generalPasteboard()
         pasteboard.clearContents()
         pasteboard.setString_forType_(self.copy_text(explained=True), A.NSPasteboardTypeString)
-        self.status.setStringValue_("Artifact and line explanations copied.")
+        self.status.setStringValue_("Code with ordinary teaching comments copied.")
 
     def taskDetails_(self, sender):
         self.pause()
@@ -1438,8 +1530,10 @@ class Controller(NSObject):
         if not self.browser.visible:
             return
         panel = A.NSSavePanel.savePanel()
+        code_projection = artifact and artifact.kind == "patch" and artifact.diff_context and self.browser.current.code_view != "diff"
         suffix = {"diagram": ".svg", "image": ".png", "patch": ".diff", "structured": ".json"}.get(artifact.kind if artifact else "text", ".txt")
-        panel.setNameFieldStringValue_(Path(artifact.id).name + suffix if artifact else "output.txt")
+        filename = Path(artifact.path).name if code_projection else Path(artifact.id).name + suffix if artifact else "output.txt"
+        panel.setNameFieldStringValue_(filename)
         if panel.runModal() == A.NSModalResponseOK:
             try:
                 target = Path(str(panel.URL().path()))
@@ -1466,12 +1560,12 @@ class Controller(NSObject):
     def set_click_through(self, enabled):
         set_overlay_appearance(
             self.window, self.root, enabled,
-            panes=[(self.body_scroll, self.body), (self.types_scroll, None),
+            panes=[(self.body_scroll, self.body), (self.code_scroll, self.code_text), (self.types_scroll, None),
                    (self.input_scroll, self.input), (self.graph_scroll, None), (self.image_scroll, None)],
             fields=[self.goal],
             buttons=[*self.controls.values(), self.add_button, self.source,
                      self.annotation, self.pin, self.older, self.newer, self.latest, self.copy, self.copy_notes, self.export],
-            canvases=[self.graph, self.image_canvas, self.types_canvas],
+            canvases=[self.graph, self.image_canvas, self.types_canvas, self.code_text, self.code_scroll.verticalRulerView()],
         )
         for control in self.type_buttons.values():
             control.setNeedsDisplay_(True)
@@ -1564,9 +1658,15 @@ class Controller(NSObject):
 
     @objc.python_method
     def output_scroll(self):
+        if not self.code_scroll.isHidden():
+            return self.code_scroll
         if not self.image_scroll.isHidden():
             return self.image_scroll
         return self.graph_scroll if not self.graph_scroll.isHidden() else self.body_scroll
+
+    @objc.python_method
+    def output_text(self):
+        return self.code_text if not self.code_scroll.isHidden() else self.body
 
     @objc.python_method
     def voice_question(self):

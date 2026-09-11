@@ -14,6 +14,8 @@ Generated images appear after their accompanying text and have their own history
 
 The default `coreaudio` system-audio backend records sound without opening a screen stream. It requires macOS 14.2+ and Terminal's audio permission. Use the explicit `screencapturekit` alternative only when needed; that legacy path can show a screen-sharing indicator. Ordinary screenshots remain one-shot. Capture is paused at launch.
 
+The **Comments** checkbox renders notes as normal source comments. A **Changes** output has Old/New line-number columns, red removals, green additions, and Current/Proposed views. Copy/export follows the selected view; Copy with comments gives the proposed code. Source offsets are preserved when known, and unknown fragment offsets remain excerpt-relative.
+
 ## Task memory
 
 **Task details…** records explicit constraints and decisions, one per line. Those fields are maintained by the user; model suggestions do not update them automatically.

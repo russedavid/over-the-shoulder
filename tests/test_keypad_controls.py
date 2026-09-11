@@ -24,7 +24,7 @@ class KeypadControllerTests(unittest.TestCase):
                 "voice_question", "update_navigation_controls", "show_frozen_status", "set_debug",
                 "show_selected_output", "advance_page",
             )},
-            window=Mock(), browser=Mock(), debug_mode=False, graph_scroll=Mock(), body_scroll=Mock(), image_scroll=Mock(),
+            window=Mock(), browser=Mock(), debug_mode=False, graph_scroll=Mock(), body_scroll=Mock(), image_scroll=Mock(), code_scroll=Mock(),
         )
         self.ui.browser.actionable.return_value = "artifact:code"
         self.ui.browser.state.types = {REPLIES: None}
@@ -35,6 +35,7 @@ class KeypadControllerTests(unittest.TestCase):
         self.ui.page_output = lambda step: Controller.page_output(self.ui, step)
         self.ui.output_scroll = lambda: Controller.output_scroll(self.ui)
         self.ui.image_scroll.isHidden.return_value = True
+        self.ui.code_scroll.isHidden.return_value = True
         self.ui.cycle_artifact = lambda step: Controller.cycle_artifact(self.ui, step)
 
     def press(self, number):

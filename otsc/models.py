@@ -66,6 +66,15 @@ class DiagramEdge(Record):
     label: str
 
 
+class DiffContext(Record):
+    """Host-attached source and proposal; never supplied by the generator."""
+
+    before: str = Field(max_length=300000)
+    after: str = Field(max_length=300000)
+    first_line: int | None = Field(default=1, ge=1)
+    annotations: list[LineAnnotation] = Field(default_factory=list)
+
+
 class ArtifactContent(Record):
     id: str
     kind: Literal["code", "patch", "diagram", "explanation", "checklist", "structured", "image"]
@@ -101,6 +110,8 @@ class ArtifactContent(Record):
 
 
 class Artifact(ArtifactContent):
+    diff_context: DiffContext | None = Field(default=None, exclude_if=lambda value: value is None)
+
     @model_validator(mode="after")
     def validate_annotations(self):
         annotation_lines = [a.line for a in self.annotations]
@@ -115,6 +126,14 @@ class Artifact(ArtifactContent):
                 raise ValueError("Line explanations exceed the actual code and may be misaligned")
         if self.kind == "patch" and not patch_added_lines(self.content, include_blank=False) <= set(annotation_lines):
             raise ValueError("Every added code line needs an explanation indexed by its new-file line")
+        if self.diff_context:
+            from otsc.diff_rendering import unified_patch
+
+            if self.kind != "patch" or unified_patch(self.diff_context.before, self.diff_context.after, self.path,
+                                                     self.diff_context.first_line) != self.content:
+                raise ValueError("Diff context must reproduce the exact patch")
+            if self.basis == "verified_file" and self.diff_context.first_line != 1:
+                raise ValueError("A verified-file diff starts from the complete file")
         return self
 
     def clean_text(self) -> str:
@@ -135,26 +154,17 @@ class Artifact(ArtifactContent):
                 return "\n\n".join(str(value) for value in (state, data.get("caption"), data.get("error"), data.get("prompt")) if value)
             except (ValueError, AttributeError):
                 return self.content
-        notes = {a.line: a.explanation for a in self.annotations}
         if self.kind == "code":
-            return "\n\n".join(
-                f"{i:>3}  {line}" + ("\n     " + notes[i] if i in notes else "")
-                for i, line in enumerate(self.content.splitlines(), 1)
-            )
+            from otsc.code_rendering import commented_code
+
+            return commented_code(self.content, self.annotations, language=self.language, path=self.path)
         if self.kind == "patch":
-            out, new_line = [], 0
-            for line in self.content.splitlines():
-                match = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
-                if match:
-                    new_line = int(match.group(1))
-                out.append(line)
-                if line.startswith("+") and not line.startswith("+++"):
-                    if new_line in notes:
-                        out.append("    → " + notes[new_line])
-                    new_line += 1
-                elif line.startswith(" "):
-                    new_line += 1
-            return "\n".join(out)
+            from otsc.code_rendering import artifact_document, commented_code
+
+            if self.diff_context:
+                return commented_code(self.diff_context.after, self.diff_context.annotations,
+                                      language=self.language, path=self.path, first_line=self.diff_context.first_line)
+            return artifact_document(self, comments=True).text
         return self.content
 
 
@@ -290,7 +300,13 @@ def normalize_optional_file_metadata(response, observations, verified_files, pro
 
 
 def response_schema(lane="deep") -> dict:
-    return (QuickAssistance if lane == "quick" else Assistance).model_json_schema()
+    schema = (QuickAssistance if lane == "quick" else Assistance).model_json_schema()
+    # Base text is attached only after host validation against the input snapshot.
+    artifact = schema.get("$defs", {}).get("Artifact")
+    if artifact:
+        artifact["properties"].pop("diff_context", None)
+    schema.get("$defs", {}).pop("DiffContext", None)
+    return schema
 
 
 def parse_response(text: str, lane="deep") -> Assistance:

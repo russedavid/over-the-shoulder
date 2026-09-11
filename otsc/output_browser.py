@@ -49,6 +49,7 @@ class OutputType(Record):
     following: bool = False
     status: str = ""
     error: str = ""
+    code_view: Literal["diff", "current", "proposed"] = "diff"
 
     @property
     def position(self):
