@@ -39,3 +39,5 @@ All seven decisions matched the expected behavior. The review calls took 7.13–
 The full 142-test suite, Ruff, offline corpus validation, and 22 native smoke checks passed. One existing race test was corrected to accept either rejection of a completed stale result or earlier cancellation before generation; both paths must reject the obsolete request.
 
 The semantic judgment can still be wrong; **Help now** provides a direct override. The change reuses the existing planner call instead of adding another model worker or a similarity threshold that could hide a small but consequential edit.
+
+The September 12 [background-planning comparison](background-planning-comparison.md) tested moving this review into the context builder. It reduced calls but did not improve fresh-answer latency, and waiting for an occupied context worker added delay. The application retains the existing independent context builder and planning path.
