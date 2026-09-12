@@ -2,6 +2,8 @@
 
 A Mac desktop collaborator that follows the task you are working on and helps create its code, design, or explanation. It uses the screen and surrounding conversation as context, including other people's questions and objections.
 
+[Source repository](https://github.com/russedavid/over-the-shoulder) · [Project page](https://davidrussell.dev/projects/otsc)
+
 The working application uses **Python, PyObjC, and AppKit**. It has one task workflow, a quick answer and an independent deeper response, selectable text, annotated code, proposed diffs, native diagrams, and optional click-through presentation. There is no separate UI framework, engine service, or IPC layer.
 
 ## Run it
