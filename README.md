@@ -58,7 +58,39 @@ Code is displayed with ordinary language comments and a separate source-line gut
 
 ## MIDI controls
 
-The Keychron K0 Max keypad uses **MIDI channel 1** (channel `0` in mido). Only note-on messages with positive velocity trigger actions. Knob detents are never debounced; other buttons retain per-note 150 ms duplicate protection. Pressing the knob changes keyboard/MIDI mode in the hardware and is not assigned an app action. The app connects to the first input and reconnects when it returns; set `OTSC_MIDI_PORT` to choose a specific input.
+A dedicated MIDI controller keeps OTSC controls out of the Cmd/Ctrl/Option (Alt) keyboard-shortcut space used by your editor, terminal, browser, and macOS. It gives you physical controls for requesting help, browsing output, and moving or resizing the overlay. In MIDI mode, the keypad suppresses its normal keyboard, macro, Fn, and volume actions, so operating OTSC does not type into the active application or trigger those shortcuts.
+
+These bindings match the note map in the [custom Keychron K0 Max MIDI firmware](https://github.com/russedavid/k0-max-midi). Install that firmware following its instructions, connect the keypad over **USB in Cable mode**, and press the knob to enter MIDI mode; cyan lighting indicates that it is active. The keypad starts in keyboard mode after power-up, and another knob press returns to keyboard mode. This firmware's MIDI transport requires USB; Bluetooth and the 2.4 GHz receiver carry keyboard input only.
+
+The layout below shows each physical control, its MIDI note number, and its OTSC function. Knob turns browse older/newer versions within the selected output type; `/` and `*` switch types, and Enter resumes live updates for the selected type. M3/M4/M5 open Debug views; M1/M2 return to actionable output.
+
+```text
+MIDI channel 1. Bracketed numbers are MIDI note numbers.
+
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| KNOB              | Circle [38]     | Triangle [39]   | Square [40]     | X [41]          |
+| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | Show/hide       |
+| CW 37: Newer      |                 |                 |                 |                 |
+| Press: MIDI/keys  |                 |                 |                 |                 |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M1 [42]           | Num/Clear [43]  | / [44]          | * [45]          | - [46]          |
+| Outputs           | New task        | Prev type       | Next type       | Smaller         |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M2 [47]           | 7 [48]          | 8 [49]          | 9 [50]          | + [51]          |
+| Replies           | Page up         | Move up         | Page down       | Bigger          |
++-------------------+-----------------+-----------------+-----------------+                 |
+| M3 [52]           | 4 [53]          | 5 [54]          | 6 [55]          |                 |
+| Context           | Move left       | Move down       | Move right      |                 |
++-------------------+-----------------+-----------------+-----------------+-----------------+
+| M4 [56]           | 1 [57]          | 2 [58]          | 3 [59]          | Enter [60]      |
+| Observed files    | Copy clean      | Center window   | Capture now     | Latest / live   |
++-------------------+-----------------------------------+-----------------+                 |
+| M5 [61]           | 0 [62]                            | . [63]          |                 |
+| Debug events      | Voice start/stop                  | Click-through   |                 |
++-------------------+-----------------------------------+-----------------+-----------------+
+```
+
+OTSC listens on **MIDI channel 1** (channel `0` in mido). Only note-on messages with positive velocity trigger actions. Knob detents are never debounced; other buttons retain per-note 150 ms duplicate protection. Pressing the knob changes keyboard/MIDI mode in the hardware and is not assigned an app action. The app connects to the first input and reconnects when it returns; set `OTSC_MIDI_PORT` to choose a specific input.
 
 | Key | MIDI note | Action |
 |---|---:|---|

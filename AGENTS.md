@@ -40,4 +40,4 @@ The owner explicitly authorized historical recordings for evaluation. Read `eval
 
 Task memory and model-directed inspection are additive, opt-in features. Restoring a checkpoint cannot authorize capture or a new project folder. Inspection tools use only immutable supplied evidence. Keep original proposal bases, user-confirmed decisions, and inferred suggestions distinct. Operational logging failures must not interrupt task assistance.
 
-Commit at real work/verification checkpoints using actual timestamps, in the user's allowed America/Chicago windows: 07:00–09:00 or 17:00–02:00. Preserve local artifacts when removing them from tracking. Do not rewrite or publish historical capture-bearing commits as part of routine implementation.
+Commit at real work/verification checkpoints using actual timestamps. On weekdays, use the user's allowed America/Chicago windows: 07:00–09:00 or 17:00–02:00. Weekends have no time-of-day restriction. Preserve local artifacts when removing them from tracking. Do not rewrite or publish historical capture-bearing commits as part of routine implementation.
