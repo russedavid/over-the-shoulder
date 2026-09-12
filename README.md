@@ -193,6 +193,6 @@ If macOS has no active display, use `.venv/bin/python tests/live_workflow.py --r
 
 Preferences and temporary redacted vision frames use `~/Library/Application Support/Over The Shoulder Coder`; credentials use Keychain. Raw screenshot and cloud-transcription audio files are not persisted. Local ASR and Codex use temporary directories removed after each operation. OCR redaction is a best-effort filter, not a guarantee that every secret in an image is recognizable. Enable vision only for screen content you intend to send to that provider.
 
-Legacy source was preserved in commit `c6f644a` before replacement. Local recordings and screenshots remain excluded from Git. Historical capture-bearing commits have not been rewritten or published as part of this work.
+The pre-overhaul source remains preserved in Git history. Historical screenshots and the generated design image were removed from branch history on September 12, 2026. Local recordings and captures remain excluded from Git.
 
 `python ots.py export-source --output /tmp/otsc-source.zip` prepares a filtered source archive for review without Git history. It does not publish or package the application.
