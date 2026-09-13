@@ -22,7 +22,7 @@ from Foundation import NSObject, NSTimer
 from PIL import Image, ImageDraw, ImageFont
 from PyObjCTools import AppHelper
 
-from evals.continuity import render
+from evals.continuity import available_code_type, render
 from evals.continuity_cases import RUBRIC, SCREENS, SPEECH, STAGES
 from otsc.app import Controller
 from otsc.codex import CodexProvider
@@ -243,8 +243,7 @@ class NativeContinuity(NSObject):
         self.emit('stage_started')
         c = self.controller
         if stage == 'unchanged':
-            key = next((key for key, stream in c.browser.state.types.items()
-                        if stream.visible and stream.visible.artifact and stream.visible.artifact.kind == 'code'), None)
+            key = available_code_type(c.browser)
             if key:
                 c.browser.select_type(key)
                 c.show_selected_output()
@@ -321,9 +320,14 @@ class NativeContinuity(NSObject):
                              elapsed=time.monotonic() - self.started,
                              runtime_source_unchanged=release_manifest()['code_hash'] == self.manifest['release']['code_hash'])
         private_write(self.directory / 'manifest.json', json.dumps(self.manifest, indent=2))
-        render(self.directory)
-        print(json.dumps({'outcome': outcome, 'review': str(self.directory / 'index.html'), 'calls': self.calls}), flush=True)
-        A.NSApp.terminate_(None)
+        try:
+            render(self.directory)
+        except Exception:
+            # Reporting cannot turn a completed runtime experiment into a product failure.
+            private_write(self.directory / 'render-error.txt', traceback.format_exc())
+        finally:
+            print(json.dumps({'outcome': outcome, 'review': str(self.directory / 'index.html'), 'calls': self.calls}), flush=True)
+            A.NSApp.terminate_(None)
 
 
 def main():
