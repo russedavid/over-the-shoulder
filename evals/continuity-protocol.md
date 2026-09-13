@@ -1,0 +1,26 @@
+# Current native workflow continuity, version 1
+
+This is a finite, explicitly invoked assessment of the current application, not a replacement scheduler. The harness runs the real AppKit Controller, ContextStore, AudioCapture transcription queues, ScreenCapture redaction, read_screen, background ContextBuilder, Coordinator, TaskPlanningProvider, validation, OutputBrowser, and native rendering. Only external screen/PCM inputs and local storage are substituted. There is no desktop capture, acoustic playback, microphone/device capture, MIDI device access, or access to a real project. Synthetic speech is generated to files, then fed silently to the normal separate-channel transcription queues.
+
+Read `protocol.md` as the governing evaluation method. `continuity_cases.py` defines six development stages with source text and evaluator-only acceptance criteria before inference. These are controlled product scenarios, not a held-out field sample. Existing historical answers and prior reference drafts are not generator inputs. Save runtime source hashes, preferences, prompts, schemas, actual request snapshots, raw outputs, native views and source events locally. Do not overwrite an existing run. Do not publish raw runtime artifacts or career strategy.
+
+## Scenario
+
+1. A screen presents a retry helper with an overly broad status range. The primary and other audio channels disagree about adding 429. Only the primary user's initial requirement is adopted.
+2. The screen repeats and the other channel says thanks. Allow multiple complete OCR cycles and at least one automatic review of the acknowledgment. Count irrelevant refreshes separately from requests that began before this stage.
+3. The primary user now adds 429, without changing the visible code. Hold the initial code output. Measure new output availability separately from a visible pane intentionally held on an older version. Check the held content and per-type history; use Latest afterward.
+4. The other channel asks a technical boundary question and raises duplicate-payment risk. Preserve the speaker's source and review whether the answer addresses both without inventing an implementation requirement.
+5. Change the visible and spoken task to a release decision checklist, without pressing New task. Review the plan change, structured outputs and preservation of uncertainty about tests/deployments.
+6. Issue explicit Help now for the old task, hold its actual completed deep-result event in the evaluation harness, press New task, and release the old event. Assess rejection of that obsolete completion, then assess new guidance for a bounded work queue. This deliberate delivery delay is excluded from natural-latency summaries.
+
+Stages advance after their required source observations have reached a terminal deep request, or a bounded timeout; success is not a condition for advancement. Initial/change stages require both a current screen and relevant speech in the request. Screen polling, automatic request decisions and memory updates otherwise follow the application's real 100 ms tick. The unchanged interval waits for two complete screen readings and one terminal post-acknowledgment review, with a minimum 30 seconds and maximum 180 seconds. Each other stage has a 240-second limit; the whole run has a 1,200-second deadline and 120 provider-call ceiling. Failures and incomplete stages remain visible rather than being rerun until success.
+
+## Separate measurements
+
+- Perception: source frame text and scripted utterances versus actual OCR/ASR, including model/voice/channel identity. Scripted references are known inputs, but synthetic clarity does not estimate real-world recognition accuracy.
+- Task success: bounded code behavior via the existing restricted AST interpreter, source attribution, question handling, plan fit and uncertainty. Unsupported code is needs-review, not automatically failure. No generated code is executed.
+- Continuity: observed file versus proposal, snapshot evidence age/missing new observations, explicit stale-event rejection, held content and badges. Passive new input does not by itself invalidate an in-flight request; distinguish an outdated snapshot from prohibited publication after explicit task supersession.
+- Duplication: no-answer decisions, exact publication suppression, actual per-type versions and semantic necessity. A rephrased duplicate can evade content hashing and still be a product failure.
+- Timing: stimulus available (rendered screen or complete PCM clip) → perception accepted → request snapshot → planned response → available output → selected pane rendered/display flushed. This is file/fixture-availability to AppKit presentation, not live utterance-start latency, physical pixel observation, or hardware capture timing. Held and unselected outputs have availability time but no claim of automatic visibility. Record all samples; no population percentiles from this small run.
+
+Judgments are separate, explicitly assistant-authored critiques with source/output evidence. Do not call them human labels, calibrated truth, or blind independent review. Preserve initial results if an evaluator is corrected. Trace review should expose the timeline, original input, actual observation, immutable request, plan decision, answer, and native view without making the reader search opaque directories.
