@@ -28,6 +28,27 @@ def validate(source, item):
 
 
 class SourceMappingTests(unittest.TestCase):
+    def test_new_inference_requires_mapping_field_but_archived_readings_still_load(self):
+        import jsonschema
+
+        schema = ScreenReading.inference_schema()
+        raw = reading().model_dump()
+        jsonschema.validate(raw, schema)
+        raw.pop('code_blocks')
+        self.assertIsNone(ScreenReading.model_validate(raw).code_blocks)
+        with self.assertRaises(jsonschema.ValidationError):
+            jsonschema.validate(raw, schema)
+        def strict_objects(node):
+            if not isinstance(node, dict):
+                return
+            if node.get('type') == 'object':
+                self.assertEqual(set(node['properties']), set(node['required']))
+                self.assertIs(node['additionalProperties'], False)
+            for value in node.values():
+                for child in value if isinstance(value, list) else [value]:
+                    strict_objects(child)
+        strict_objects(schema)
+
     def test_memory_delivery_and_diff_preserve_original_code_and_line_positions(self):
         context, source = source_scene(reading())
         before = fragment(source)

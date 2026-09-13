@@ -35,7 +35,7 @@ def read_screen(path, provider, token, progress, *, at=None):
     token.check()
     data = provider.generate_json(
         snapshot, "ocr", token, progress,
-        schema=ScreenReading.model_json_schema(), system=SCREEN_PROMPT, prompt=SCREEN_REQUEST,
+        schema=ScreenReading.inference_schema(), system=SCREEN_PROMPT, prompt=SCREEN_REQUEST,
     )
     token.check()
     # Old saved readings may omit mappings; a new OCR response may not use that

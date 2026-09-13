@@ -55,6 +55,14 @@ class ScreenReading(Record):
     # region can be established; that is not permission for a legacy fallback.
     code_blocks: list[ScreenCodeBlock] | None = Field(default=None, max_length=20)
 
+    @classmethod
+    def inference_schema(cls):
+        """Strict provider contract; local loading still accepts old readings."""
+        schema = cls.model_json_schema()
+        schema['required'] = list(schema['properties'])
+        schema['properties']['code_blocks'].pop('default', None)
+        return schema
+
     @model_validator(mode='before')
     @classmethod
     def isolate_optional_source_mappings(cls, value):

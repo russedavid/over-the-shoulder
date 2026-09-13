@@ -119,11 +119,15 @@ def run(source, output):
         for raw in event['update']['observed_files']:
             item = ObservedFile.model_validate(raw)
             old_sources = [original[s][0] for s in item.source_ids]
-            new_sources = [fresh_sources[original[s][1]] for s in item.source_ids]
+            new_sources = [fresh_sources[original[s][1]] for s in item.source_ids if original[s][1] in fresh_sources]
             record = {'at': event['seconds'], 'original': raw, 'content_hash': digest(item.content),
                       'fresh_source_ids': [s.id for s in new_sources]}
             probe = Assistance(task='', summary='', conversation=[], artifacts=[], open_questions=[], observed_files=[item])
             for label, sources in [('before', old_sources), ('after', new_sources)]:
+                if len(sources) != len(item.source_ids):
+                    record[label] = 'not_assessed'
+                    record[label + '_reason'] = 'Fresh perception unavailable; see the recorded provider failure.'
+                    continue
                 candidate = item.model_copy(update={'source_ids': [s.id for s in sources]})
                 probe.observed_files = [candidate]
                 try:

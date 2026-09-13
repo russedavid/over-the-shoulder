@@ -175,7 +175,7 @@ def image_pass(directory, role="ocr", asset_ids=None):
                     "deep",
                     Cancellation(),
                     progress,
-                    schema=ScreenReading.model_json_schema(),
+                    schema=ScreenReading.inference_schema(),
                     system=SCREEN_PROMPT,
                     prompt="Read the attached image independently. No prior model answer is provided.",
                 )
