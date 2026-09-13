@@ -30,12 +30,59 @@ class VisualFact(Record):
     certainty: str
 
 
+class ScreenCodeBlock(Record):
+    path: str = Field(min_length=1, max_length=500)
+    raw_text: str = Field(min_length=1, max_length=20000)
+    gutter_separator: str | None = Field(max_length=8)
+
+    @model_validator(mode='after')
+    def validate_mapping(self):
+        from otsc.source_mapping import source_lines
+
+        if not safe_relative_path(self.path):
+            raise ValueError('Source region needs a safe visible relative path')
+        source_lines(self)
+        return self
+
+
 class ScreenReading(Record):
     visible_text: str = Field(max_length=45000)
     facts: list[VisualFact] = Field(max_length=30)
     inferred_task: str
     uncertainties: list[str] = Field(max_length=20)
     important_details: list[str] = Field(max_length=20)
+    # None preserves historical readings. New OCR returns [] when no source
+    # region can be established; that is not permission for a legacy fallback.
+    code_blocks: list[ScreenCodeBlock] | None = Field(default=None, max_length=20)
+
+    @model_validator(mode='before')
+    @classmethod
+    def isolate_optional_source_mappings(cls, value):
+        from otsc.source_mapping import region_span
+
+        if not isinstance(value, dict) or value.get('code_blocks') is None:
+            return value
+        if not isinstance(value.get('visible_text'), str):
+            return value
+        candidates = value['code_blocks']
+        accepted, spans = [], []
+        invalid = not isinstance(candidates, list) or len(candidates) > 20
+        for raw in candidates[:20] if isinstance(candidates, list) else []:
+            try:
+                block = ScreenCodeBlock.model_validate(raw)
+                start, end = region_span(block, value['visible_text'])
+                accepted.append(block)
+                spans.append((start, end))
+            except ValueError:
+                invalid = True
+        conflicts = {i for i, (a, b) in enumerate(spans) for j, (c, d) in enumerate(spans)
+                     if i != j and a < d and c < b}
+        invalid |= bool(conflicts)
+        result = {**value, 'code_blocks': [block for i, block in enumerate(accepted) if i not in conflicts]}
+        if invalid and isinstance(value.get('uncertainties'), list):
+            result['uncertainties'] = [*value['uncertainties'][:19],
+                                      'Some code-region mappings could not be verified against the literal OCR and were omitted.']
+        return result
 
 
 class Observation(Record):
@@ -252,6 +299,21 @@ class Assistance(Record):
             sources = [observations_by_id[s] for s in item.source_ids]
             if any(o.kind not in {"screen", "file"} for o in sources):
                 raise ValueError("A spoken description is not an observed source file")
+            mapped = [o for o in sources if o.reading is not None and o.reading.code_blocks is not None]
+            if mapped:
+                from otsc.source_mapping import matches_fragment, region_span
+
+                # Recheck against the observation text, not only the reading's
+                # copy: citations must not validate against mismatched payloads.
+                matches = False
+                for source in mapped:
+                    for block in source.reading.code_blocks:
+                        region_span(block, source.text)
+                        if matches_fragment(item, block):
+                            matches = True
+                if not matches:
+                    raise ValueError('Observed code must match one mapped region, including indentation and line origin')
+                continue
             visible = " ".join(" ".join(o.text.split()) for o in sources)
             if item.path not in visible:
                 raise ValueError("An observed file path must be visible in its cited observations")
