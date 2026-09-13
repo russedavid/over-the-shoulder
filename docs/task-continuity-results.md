@@ -1,5 +1,7 @@
 # Native task continuity: findings and open failures
 
+Follow-up: the [source-mapping fix and targeted replay](ocr-source-mapping.md) now recover the observed-file entries and diffs for both failing screenshots. The original results below remain the baseline; scheduling and latency have not been changed.
+
 The current pipeline handled changed requirements, another participant's question, a new deliverable, and explicit task supersession. It also exposed a concrete gap: line-numbered OCR prevented a valid observed code fragment from entering the workspace. Useful code reached the pane, but the source-backed companion diff was unavailable. No application logic, model defaults or source-validation rules were changed for this study.
 
 ## Run and boundaries

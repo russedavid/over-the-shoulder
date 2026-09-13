@@ -36,6 +36,8 @@ Each artifact has a stable ID, kind, title, canonical `content`, language, relat
 
 Every artifact cites observations from its request. Observed-file content must occur in its cited screen/file observations; spoken claims do not qualify. A verified-file proposal must target a file actually included in the selected snapshot.
 
+New screen readings include `code_blocks`: visible filenames, literal region quotes, and explicit editor-gutter separators. The host validates region membership and derives source lines and absolute positions without removing code indentation. Observed-file updates must match a single mapped region and its line origin; empty or invalid mappings cannot fall back to arbitrary OCR text. Unnumbered regions retain unknown absolute origins. Historical readings remain loadable. See the [source-mapping contract and replay](ocr-source-mapping.md).
+
 Delivery validates the answer, artifacts, and optional file-cache updates independently. An uncorroborated cache entry is excluded from observed state and cannot create an excerpt diff; it does not discard an otherwise usable answer. A partial code proposal can retain its content while an unconfirmed file path is omitted. Unverified patches and unsupported verified-file claims remain withheld.
 
 Missing or misaligned code explanations trigger at most one bounded, annotation-only repair call, with a 30-second deadline and no screenshot or project files. The original code, answer, paths, and citations are not editable by that call. If repair fails, only the affected code artifact is withheld and the answer explains that limitation. Other valid assistance remains available. Host delivery notes accompany replay traces; they are not model-provided evidence.
