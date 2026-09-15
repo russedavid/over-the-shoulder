@@ -1,10 +1,22 @@
 # Over The Shoulder Coder
 
-A Mac desktop collaborator that follows the task you are working on and helps create its code, design, or explanation. It uses the screen and surrounding conversation as context, including other people's questions and objections.
+**You operate the tools. The AI follows your work.**
+
+Over The Shoulder Coder (OTSC) offers a third approach alongside computer-use agents and coding agents: contextual AI assistance while the human stays in complete control. Computer-use agents can operate interfaces; coding agents can work directly in a repository and shell. OTSC builds context from what you see and hear, then helps you decide what to do next.
+
+You navigate applications, run commands, and apply changes. OTSC follows screen captures and the conversation to explain errors, suggest next steps, write annotated code, propose source-backed diffs, and develop system designs. Questions and objections from other people become part of the task context, with your microphone and the other audio channel kept separate. You choose when to start or pause capture and which suggestions to use.
 
 [Source repository](https://github.com/russedavid/over-the-shoulder) · [Project page](https://davidrussell.dev/projects/otsc)
 
-The working application uses **Python, PyObjC, and AppKit**. It has one task workflow, a quick answer and an independent deeper response, selectable text, annotated code, proposed diffs, native diagrams, and optional click-through presentation. There is no separate UI framework, engine service, or IPC layer.
+## Help wherever the work happens
+
+The AI does not need direct access to the target shell, repository, or filesystem to help. OTSC runs on your Mac and follows the work visible on your screen, including environments reached through a browser or remote session.
+
+- **Debugging in a cloud provider's console.** Work through logs, metrics, settings, and deployment status while OTSC helps interpret the evidence and suggests the next check. A teammate's explanation of a recent change can inform the investigation alongside the screen.
+- **Working on an edge device through browser-based SSH.** Read remote command output or a visible code excerpt, get an explanation or proposed correction, and decide what to run yourself. No agent needs to be installed on the device or given direct access to its filesystem.
+- **Working through a design or debugging session with other people.** Bring their questions, constraints, and objections into the code, explanation, or diagram you are creating while retaining control of the decisions and changes.
+
+A local project connection is optional. Without one, OTSC works from captured visual and spoken evidence; it keeps observed code fragments distinct from verified files and proposed changes. You can inspect a suggestion, hold it on screen, or return to it later while the task continues.
 
 ## Run it
 
@@ -153,6 +165,8 @@ python ots.py ops --recovery-exercise --output /tmp/otsc-recovery
 ```
 
 ## Verification and implementation
+
+The desktop application uses **Python, PyObjC, and AppKit**, with one task workflow, independent quick and deep assistance, and optional click-through presentation.
 
 ```sh
 uv run --extra mac python -m unittest discover -s tests -v
