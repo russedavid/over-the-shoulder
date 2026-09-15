@@ -4,6 +4,23 @@ The owner subsequently chose continuous full-resolution Astra low/Fast screen re
 
 The later Terra/Luna trial preserved nine selected code fragments in 20.6/17.0 seconds, but both omitted the per-shift debug logs. Astra low/Fast preserved all 24 visible log lines in its 28.9-second full-resolution control, including a potentially relevant count discrepancy. Luna also mistook GitLens blame for a TODO. Faster response time and code-fragment checks alone did not establish equally complete perception; this informed the decision to use Astra.
 
+## September 12: Sol with no reasoning and Fast processing
+
+Run `ocr-sol-none-fast-20260912-100841` compared GPT-5.6 Sol / none / Fast with a fresh GPT-6 Astra / low / Fast control on the same redacted 2850 × 1720 workplace screenshot. Both used the current production `read_screen` function, prompt, schema, and unchanged image bytes. Sol ran first; neither model received previous OCR, a reference draft, or an answer. The current prompt explicitly requests detailed debug logs, so the older timings above are not a controlled comparison with these new calls.
+
+| Selected checks | Sol none / Fast | Astra low / Fast |
+|---|---:|---:|
+| Extraction and validation time | 33.87 s | 43.35 s |
+| Selected code fragments preserved | 9/9 | 9/9 |
+| Correct per-shift log triples | 23/24 | 24/24 |
+| Reported input / output tokens | 9,616 / 2,479 | 10,620 / 2,443 |
+
+Sol used 21.9% less elapsed time in this pair, and it transcribed all 24 detailed log lines. However, it changed `Shift 5 completed for workplace 4` to workplace 2. It then promoted that transcription error into a high-confidence claim of inconsistent running counts. It also omitted the visible JSON closing syntax and wrongly said the final array continued below the screenshot, and changed the `shared.types.ts` tab name to `shared/types.ts` in its details. These are task-relevant perception failures, not merely differences in formatting.
+
+Astra retained the correct log sequence, complete final array, separate panes, and distinction between GitLens annotations and code. It made a smaller incidental transcription error in a startup duration (`+1ms` rather than the visible `+0ms` for WorkplacesController). Passing the selected checks is not a claim of perfect full-screen character accuracy.
+
+Keep Astra as the OCR default based on this run. This is one image and one call per model, with assistant-authored review against the pixels; it does not establish general error rates or guaranteed latency. Capture/redaction and rendering are excluded from the timing. The private run contains original results, image hashes, source screenshot, traces, checks, `assistant-review.json`, and a side-by-side `index.html`. Two earlier preflight attempts reached neither model: one confused the historical base64-payload hash with the PNG-file hash, and one used an expired synthetic observation timestamp. Both setup failures are preserved separately; no application image guard was weakened.
+
 ## What the existing measurements establish
 
 The 23-image recorded evaluation used the current Tesseract path and a separate GPT-5.5 image-only reading prompt. The latter returned visible text, facts, task interpretation, and uncertainty. These are observed times from one pass, including normal provider/CLI overhead, not latency guarantees.
