@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from PIL import Image
+
 from otsc.capture_region import initial_rect, intersects_display, rect_from_region, region_from_rect
 
 
@@ -26,7 +28,7 @@ class CaptureRegionTests(unittest.TestCase):
         from otsc.capture import ScreenCapture
 
         region = (-600, -690, 900, 500)
-        frame, callback = Mock(), Mock()
+        frame, callback = Image.new("RGB", (30, 20), "white"), Mock()
         screen = ScreenCapture()
         screenshot = Mock(return_value=frame)
         with patch.dict(sys.modules, {"pyautogui": SimpleNamespace(screenshot=screenshot)}), \
@@ -39,7 +41,7 @@ class CaptureRegionTests(unittest.TestCase):
     def test_default_uses_one_explicit_primary_display_rectangle_on_macos(self):
         from otsc.capture import ScreenCapture
 
-        screenshot = Mock()
+        screenshot = Mock(return_value=Image.new("RGB", (30, 20), "white"))
         quartz = SimpleNamespace(CGMainDisplayID=lambda: 1,
                                  CGDisplayBounds=lambda _: SimpleNamespace(origin=(0, 0), size=(2336, 1510)))
         screen = ScreenCapture()

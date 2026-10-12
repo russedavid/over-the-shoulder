@@ -1,5 +1,6 @@
 """Opt-in screen/OCR and separately attributed microphone/system audio capture."""
 
+import hashlib
 import io
 import queue
 import re
@@ -17,14 +18,24 @@ from otsc.privacy import app_directory, private_directory, private_write, redact
 from otsc.settings import Credentials, ModelChoice
 
 
+class UnchangedScreen(Exception):
+    """The exact pixels/region already have a successfully accepted reading."""
+
+    def __init__(self, path=""):
+        self.path = path
+
+
 class ScreenCapture:
     def __init__(self):
         self.signature = ""
         self.paths = deque()
         self.lock = threading.Lock()
         self.closed = False
+        self.accepted_frame = None
+        self.accepted_path = ""
+        self.frame_hashes = {}
 
-    def capture(self, region=None, *, keep_image=False, on_captured=None, full_resolution=False):
+    def capture(self, region=None, *, keep_image=False, on_captured=None, full_resolution=False, skip_unchanged=False):
         import pyautogui
 
         if region is None and sys.platform == "darwin":
@@ -37,7 +48,25 @@ class ScreenCapture:
         image = pyautogui.screenshot(region=region)
         if on_captured:
             on_captured()
-        return self.interpret(image, keep_image=keep_image, full_resolution=full_resolution)
+        signature = hashlib.sha256(repr((region, image.size, image.mode)).encode() + image.tobytes()).hexdigest()
+        with self.lock:
+            if skip_unchanged and signature == self.accepted_frame:
+                raise UnchangedScreen(self.accepted_path)
+        result = self.interpret(image, keep_image=keep_image, full_resolution=full_resolution)
+        if signature and result[1]:
+            with self.lock:
+                self.frame_hashes[result[1]] = signature
+        return result
+
+    def accept_frame(self, path):
+        with self.lock:
+            self.accepted_frame = self.frame_hashes.get(str(path))
+            self.accepted_path = str(path)
+
+    def invalidate_frame(self):
+        with self.lock:
+            self.accepted_frame = None
+            self.accepted_path = ""
 
     def interpret(self, image, *, keep_image=False, full_resolution=False):
         import pytesseract
@@ -118,7 +147,9 @@ class ScreenCapture:
                 self.paths.append(target)
                 # Only this process's recent redacted frames; raw screenshots are never persisted.
                 while len(self.paths) > 12:
-                    self.paths.popleft().unlink(missing_ok=True)
+                    old = self.paths.popleft()
+                    old.unlink(missing_ok=True)
+                    self.frame_hashes.pop(str(old), None)
             path = str(target)
         return text, path
 
@@ -128,6 +159,9 @@ class ScreenCapture:
             for path in self.paths:
                 path.unlink(missing_ok=True)
             self.paths.clear()
+            self.frame_hashes.clear()
+            self.accepted_frame = None
+            self.accepted_path = ""
 
 
 def make_system_audio(backend="coreaudio"):
@@ -343,7 +377,10 @@ class AudioCapture:
     def _run(self):
         import numpy as np
 
+        from otsc.speech_chunks import SpeechChunks
+
         try:
+            segmenters = {channel: SpeechChunks(self.settings.audio_chunk_seconds) for channel in self.queues}
             for channel in self.queues:
                 threading.Thread(target=self._transcribe, args=(channel,), daemon=True).start()
             if self.settings.microphone:
@@ -369,7 +406,7 @@ class AudioCapture:
                 return
             self.events.put({"type": "audio_status", "capture_id": self.id, "message": "Audio capture is active."})
             while not self.stop_event.is_set():
-                self.wake.wait(self.settings.audio_chunk_seconds)
+                self.wake.wait(.1 if self.settings.audio_endpointing else self.settings.audio_chunk_seconds)
                 self.wake.clear()
                 if self.stop_event.is_set():
                     break
@@ -392,18 +429,20 @@ class AudioCapture:
                         self.system.stop()
                         self.system = None
                 for channel, samples in recordings.items():
-                    if samples.size < 4000 or np.sqrt(np.mean(samples**2)) < 0.003:
-                        continue
-                    try:
-                        self.queues[channel].put_nowait((samples, time.time()))
-                    except queue.Full:
-                        self.events.put(
-                            {
-                                "type": "audio_status",
-                                "capture_id": self.id,
-                                "message": f"{channel} transcription is behind; a chunk was skipped.",
-                            }
-                        )
+                    chunks = segmenters[channel].feed(samples, flush=bool(flush_id)) if self.settings.audio_endpointing else [samples]
+                    for chunk in chunks:
+                        if chunk.size < 4000 or np.sqrt(np.mean(chunk**2)) < 0.003:
+                            continue
+                        try:
+                            self.queues[channel].put_nowait((chunk, time.time()))
+                        except queue.Full:
+                            self.events.put(
+                                {
+                                    "type": "audio_status",
+                                    "capture_id": self.id,
+                                    "message": f"{channel} transcription is behind; a chunk was skipped.",
+                                }
+                            )
                 if flush_id:
                     deadline = time.monotonic() + 30
                     while (

@@ -35,6 +35,7 @@ class ModelChoice(BaseModel):
     max_tokens: int = Field(default=2000, ge=256, le=16000)
     reasoning: str = ""
     fast_mode: bool = False
+    codex_transport: Literal["app-server", "exec"] = "app-server"
 
     @model_validator(mode="after")
     def validate_endpoint(self):
@@ -61,6 +62,7 @@ class ModelChoice(BaseModel):
 
 class Settings(BaseModel):
     model_defaults_version: int = Field(default=3, ge=1)
+    combined_deep: bool = True
     configured: bool = False
     quick: ModelChoice = Field(
         default_factory=lambda: ModelChoice(
@@ -99,6 +101,8 @@ class Settings(BaseModel):
     system_role: Literal["primary_user", "other_people", "uncertain"] = "other_people"
     interval_seconds: int = Field(default=30, ge=5, le=300)
     audio_chunk_seconds: int = Field(default=5, ge=2, le=20)
+    audio_endpointing: bool = True
+    unchanged_screen_poll_seconds: float = Field(default=.5, ge=.2, le=10)
     hourly_requests: int = Field(default=120, ge=1, le=1000)
     screen_region: tuple[int, int, int, int] | None = None
     window_bounds: tuple[int, int, int, int] = (120, 100, 1050, 800)

@@ -7,7 +7,7 @@ from jsonschema import Draft202012Validator, ValidationError
 from pydantic import Field, model_validator
 
 from otsc.delivery import prepare_response
-from otsc.models import LineAnnotation, NoAnswerUpdate, Record, response_schema
+from otsc.models import ConversationResponse, LineAnnotation, NoAnswerUpdate, ObservedFile, Record, response_schema
 from otsc.telemetry import Progress, digest, record_progress
 from otsc.workspace import verified_from_snapshot
 
@@ -60,6 +60,22 @@ class ImageOutput(Record):
     action: Literal["generate", "revise", "keep"]
     prompt: str = Field(max_length=16000)
     caption: str = Field(max_length=4000)
+
+
+class NamedOutput(Record):
+    key: str
+    source_ids: list[str] = Field(min_length=1, max_length=80)
+    value_json: str = Field(max_length=100000)
+
+
+class CombinedAnswer(Record):
+    decision: PlanDecision
+    task: str
+    summary: str
+    conversation: list[ConversationResponse]
+    outputs: list[NamedOutput] = Field(max_length=12)
+    observed_files: list[ObservedFile]
+    open_questions: list[str]
 
 
 PLANNING_SYSTEM = """Plan how Over The Shoulder Coder should help the PRIMARY USER complete the actual task.
@@ -272,6 +288,12 @@ class TaskPlanningProvider:
             "For sections marked json_string, encode the section's JSON value as a string; the host decodes and validates it before display."
         raw = self.base.generate_json(snapshot, lane, token, progress, schema=schema, system=system,
                                       prompt=json.dumps({"plan": self.last_plan, "wire_encodings": encodings, "context": context}, ensure_ascii=False))
+        return self.assemble(raw, plan, decision, snapshot, lane, token, progress, encodings, data_schemas)
+
+    def assemble(self, raw, plan, decision, snapshot, lane, token, progress, encodings, data_schemas):
+        previous = json.loads(snapshot.task_plan)
+        known = {o.id for o in snapshot.observations}
+        self.last_plan = plan.model_dump()
         self.last_outputs = raw
         fields = {field.key: field for field in plan.outputs}
         artifacts, notes = [], []
@@ -336,3 +358,61 @@ class TaskPlanningProvider:
             labels = [fields[n["section"]].label if n["section"] in fields else n["section"] for n in notes]
             response.summary += "\n\nSome sections could not be validated: " + ", ".join(labels) + ". Other sections remain available."
         return response
+
+
+class CombinedTaskProvider(TaskPlanningProvider):
+    """Review the task and generate its named outputs in one model turn."""
+
+    def __init__(self, base):
+        super().__init__(base, base)
+
+    def generate(self, snapshot, lane, token, progress):
+        if lane != "deep":
+            return self.base.generate(snapshot, lane, token, progress)
+        context = snapshot.prompt_context()
+        context["verified_local_files"] = verified_from_snapshot(snapshot)
+        previous = json.loads(snapshot.task_plan)
+        system = PLANNING_SYSTEM + "\n\n" + TASK_SYSTEM + """
+Review the task FIRST, then produce its answer in this same call. No second generator follows.
+Return decision with the answer-needed decision and a reused or complete revised plan.
+For an unchanged automatic request with an existing answer, return answer_needed=false, reuse_previous=true, plan=null, outputs=[], conversation=[], observed_files=[], open_questions=[], summary="". Do not restate the answer.
+Otherwise generate every named section in the selected plan. outputs is a list of {key, source_ids, value_json}; keys must be unique and match the plan. value_json is a JSON-encoded value: code uses the supplied code shape with line annotations, image uses the image shape, text encodes a JSON string, and json encodes a value matching the section's data_schema. The host decodes and validates each value against the selected plan before display.
+New or revised images must provide complete, coherent drawing briefs for the configured image generator, not SVG, ASCII diagrams, fictitious filenames or URLs. Keep an existing image with action=keep when unchanged. Use action=revise with its stable key when changing a previous drawing.
+Explicit Help now and initial help require an answer. A reused plan may still need a new answer. Keep reasons concise. Never claim source was edited or tests executed. Return the structured envelope only."""
+        raw = self.base.generate_json(snapshot, lane, token, progress, schema=CombinedAnswer.model_json_schema(),
+                                      system=system, prompt=json.dumps({"context": context, "section_value_shapes": {
+                                          "code": inline_schema(CodeOutput.model_json_schema()),
+                                          "image": inline_schema(ImageOutput.model_json_schema()),
+                                          "text": "A JSON string", "json": "The value matching the chosen field's data_schema",
+                                      }}, ensure_ascii=False))
+        combined = CombinedAnswer.model_validate(raw)
+        decision = combined.decision
+        self.last_decision = decision.model_dump()
+        if snapshot.automatic_refresh and json.loads(snapshot.previous_answer) and previous and not decision.answer_needed and decision.reuse_previous:
+            record_progress(progress, "refresh_reviewed", outcome="unchanged", result_hash=digest(self.last_decision))
+            return NoAnswerUpdate(reason=decision.answer_reason)
+        plan = TaskPlan.model_validate(previous) if decision.reuse_previous and previous else decision.plan
+        if plan is None:
+            raise ValueError("The combined answer did not supply a usable task plan")
+        known = {o.id for o in snapshot.observations}
+        if not decision.reuse_previous and not set(plan.source_ids) <= known:
+            raise ValueError("The task plan cites unknown observations")
+        _, encodings, data_schemas = contract_for(plan)
+        keys = [value.key for value in combined.outputs]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Combined answer returned duplicate section keys")
+        # Decoding/validation failures remain isolated by the existing assembler.
+        values = {}
+        for value in combined.outputs:
+            try:
+                decoded = json.loads(value.value_json)
+            except ValueError:
+                continue
+            values[value.key] = value.value_json if encodings.get(value.key) == "json_string" else decoded
+        answer = {key: getattr(combined, key) for key in ("task", "summary", "open_questions")}
+        answer.update(conversation=[x.model_dump() for x in combined.conversation],
+                      observed_files=[x.model_dump() for x in combined.observed_files], outputs=values,
+                      output_sources={x.key: x.source_ids for x in combined.outputs})
+        record_progress(progress, "task_planned", result_hash=digest(plan.model_dump()), reason="reused" if decision.reuse_previous else "new")
+        record_progress(progress, "refresh_reviewed", outcome="answer_needed", result_hash=digest(self.last_decision))
+        return self.assemble(answer, plan, decision, snapshot, lane, token, progress, encodings, data_schemas)

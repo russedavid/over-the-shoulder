@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 
 from otsc.images import ImageJob, image_key, store_png
 from otsc.midi import MidiInput
-from otsc.models import Artifact
+from otsc.models import Artifact, Assistance, ConversationResponse
 from otsc.output_browser import CONTEXT, EVENTS, FILES, GUIDANCE, REPLIES, artifact_key
 from otsc.preferences import Preferences
 from otsc.privacy import private_directory, private_write
@@ -30,6 +30,7 @@ def publish(controller, response):
     controller.coordinator.published_lane = -1
     controller.coordinator.active_lanes = {"deep"}
     job = Job(identity, snapshot, "deep", Cancellation())
+    controller.coordinator.lane_jobs["deep"] = job
     controller.handle_event({"type": "result", "job": job, "response": response, "elapsed": 0})
 
 
@@ -46,6 +47,7 @@ def smoke_tick(c):
                 return
             check_code(c, directory, response)
             check_capture_frame(c, directory)
+            check_quick_stream(c, directory)
             c.smoke_step = 1
             c.load_demo(True)
         elif c.smoke_step == 1 and response.artifacts[0].kind == "diagram":
@@ -86,6 +88,8 @@ def smoke_tick(c):
                     "frame close preserves region, reopening restores it, primary-display reset clears it",
                     "capture frame excluded from screenshots; border outside the clear captured interior",
                     "toolbar wraps at the minimum window width without hiding capture controls",
+                    "quick streaming updates existing guidance/replies without adding history or changing frozen output",
+                    "stream errors restore the prior validated guidance",
                 ],
             }, indent=2))
             c.quit_(None)
@@ -98,6 +102,43 @@ def smoke_tick(c):
         import os
 
         os._exit(1)
+
+
+def check_quick_stream(c, directory):
+    observation = c.context.snapshot().observations[0]
+    response = Assistance(task="Synthetic stream check", summary="Previous validated guidance.",
+                          conversation=[ConversationResponse(source_id=observation.id, action="answer", text="Previous reply.", artifact_effect="")],
+                          artifacts=[], observed_files=[], open_questions=[])
+    entry = c.output_history.append(response, session_id=c.context.session_id, goal=c.context.goal, lane="quick", sources=[observation])
+    c.browser.ingest(entry)
+    c.browser.select_type(GUIDANCE, follow=True)
+    c.render_response()
+    before = len(c.output_history.entries)
+    job = Job("synthetic-stream", c.context.snapshot(), "quick", Cancellation())
+    c.coordinator.lane_jobs["quick"] = job
+    c.coordinator.active_lanes = {"quick"}
+    c.coordinator.deep_published_evidence = None
+    c.coordinator.last_requested_task_revision = c.context.task_revision
+    event = {"type": "progress", "request_id": job.request_id, "lane": "quick", "job": job, "message": "Draft: A useful partial answer"}
+    c.handle_event(event)
+    assert str(c.body.string()) == "A useful partial answer"
+    assert len(c.output_history.entries) == before
+    c.browser.select_type(REPLIES, follow=True)
+    c.render_response()
+    c.handle_event({**event, "message": "Reply draft: A direct reply"})
+    assert str(c.body.string()) == "A direct reply"
+    c.browser.select_type(GUIDANCE, follow=True)
+    c.render_response()
+    c.browser.freeze()
+    c.handle_event({**event, "message": "Draft: Must remain hidden"})
+    assert str(c.body.string()) == "Previous validated guidance."
+    c.browser.resume()
+    c.handle_event(event)
+    c.handle_event({"type": "error", "job": job, "message": "Synthetic stream failure"})
+    assert str(c.body.string()) == "Previous validated guidance."
+    assert len(c.output_history.entries) == before
+    c.save_view_image(directory / "stream-recovery.png")
+    c.notice_text = ""
 
 
 def check_capture_frame(c, directory):

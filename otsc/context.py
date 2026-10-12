@@ -50,6 +50,7 @@ class Snapshot:
     context_updated_through: int = -1
     task_plan: str = "{}"
     automatic_refresh: bool = False
+    previous_quick_answer: str = "{}"
 
     def prompt_context(self) -> dict:
         observations = []
@@ -213,6 +214,19 @@ class ContextStore:
             if not duplicate_screen:
                 self.changed(task=channel == "typed" or interrupting)
             return observation
+
+    def refresh_screen(self, image_path, at):
+        """An exact pixel match refreshes recency without becoming new evidence."""
+        with self._lock:
+            for index in range(len(self.observations) - 1, -1, -1):
+                observation = self.observations[index]
+                if observation.kind == "screen" and observation.image_path == image_path:
+                    fresh = observation.model_copy(update={"at": at}, deep=True)
+                    self.observations[index] = fresh
+                    if observation.id in self.retained_sources:
+                        self.retained_sources[observation.id] = fresh
+                    return True
+        return False
 
     def integrate(self, response: Assistance, *, replace_open_questions=True, sources=None):
         with self._lock:

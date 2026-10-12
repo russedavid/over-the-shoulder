@@ -98,6 +98,15 @@ class CodexProvider:
         return prepare_response(raw, snapshot, lane, token, progress, provider=self)
 
     def generate_json(self, snapshot, lane, token, progress, *, schema, system, prompt):
+        if self.choice.codex_transport == "app-server":
+            from otsc.codex_server import server_for
+
+            result, self.last_raw_text = server_for(lane).generate(
+                self.choice.model_copy(update={"fast_mode": self.fast_mode}), lane, token, progress,
+                schema=schema, system=system, prompt=prompt,
+                picture=latest_image(snapshot, self.choice.send_images),
+            )
+            return result
         executable = shutil.which("codex")
         if not executable:
             raise RuntimeError("Codex CLI was not found. Install it and sign in, or choose an API provider.")

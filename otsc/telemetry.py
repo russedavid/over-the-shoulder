@@ -53,6 +53,7 @@ FIELDS = {
     "reasoning",
     "requested_service_tier",
     "image_hash",
+    "transport",
 }
 
 
@@ -208,7 +209,7 @@ class Progress:
 
     def __call__(self, message):
         self.callback(message)
-        if str(message).startswith("Draft: ") and not self.first_output:
+        if str(message).startswith(("Draft: ", "Reply draft: ")) and not self.first_output:
             self.first_output = True
             self.record("first_output", first_output_ms=round((time.monotonic() - self.started) * 1000))
 

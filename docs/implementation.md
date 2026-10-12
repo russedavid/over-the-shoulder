@@ -1,5 +1,41 @@
 # Implementation status
 
+## October 12, 2026 latency changes
+
+Quick replies now make an answer-or-no-change decision independently of deep work. Each lane has one bounded job and its own evidence watermark; incoming evidence is coalesced while that lane is busy. A newer quick question can finish before an older deep job, and that older job cannot replace the newer reply. Manual Help now supersedes both jobs. Pinned views, source checks, code annotations, and per-type history remain in place.
+
+Codex uses persistent local stdio app-server connections, with new ephemeral threads for each request and streamed quick text. There is no listening network port, copied authentication token, or shared conversation history between tasks. Final validation still precedes history publication. Per-model `codex_transport: "exec"` retains the former transport for compatibility; it is not a silent fallback. The Settings checkbox for combined deep output is on by default. Turn it off to use the separate planner.
+
+The combined deep call reviews the existing plan and generates named output values in one response. Arbitrary JSON schemas, code, image briefs and text are decoded and checked by the host. An invalid section is isolated without discarding valid siblings. Exact screenshot deduplication skips local OCR/VLM work only after the matching frame has an accepted reading. A one-pixel or region change still gets read. Identical frames refresh the existing observation's recency without advancing the evidence revision; failed/cancelled reads retry, and explicit capture bypasses the cache.
+
+Audio is checked every 100 ms and flushed after a short pause, with a bounded maximum of five seconds by default. Microphone and system audio retain separate buffers and attribution. `Flush at pauses` can be disabled to retain fixed batching, and `Max audio (s)` remains editable. Rigid two-second cuts were rejected after they hallucinated part of a synthetic sentence. The pause-aware test delivered a 3.37-second question at 3.6 seconds with exact text; a longer utterance retained its meaning but repeated one boundary word. This is not an acoustic accuracy benchmark.
+
+### Measured comparison
+
+Seconds from available synthetic evidence to accepted output; preview is provisional text, not a committed artifact. The same eight scenarios and model choices were used. The first comparison alternated baseline/new order. A discovered task-change error was corrected and the final new path reran all eight cases. Both run identities and original failures are retained outside Git.
+
+| Scenario | Old quick | New preview | New quick | Old deep | New deep |
+|---|---:|---:|---:|---:|---:|
+| first answer | 6.66 | 3.96 | 4.84 | 31.81 | 20.39 |
+| new question | 20.25 | 2.52 | 4.18 | 30.25 | 11.94 |
+| small constraint | 21.59 | 3.18 | 4.29 | 32.94 | 20.33 |
+| new contract | 21.54 | 2.27 | 3.08 | 24.92 | 15.43 |
+
+Across the four required-answer scenarios, median completed quick latency fell from 20.89 to 4.23 seconds; median deep latency fell from 31.03 to 17.88 seconds. All four quiet scenarios produced zero additional history entries. Both code scenarios passed the existing five restricted-AST cases; the task-change case returned the exact requested JSON. The worked example was reviewed by the assistant and correctly answered the other participant with $10.
+
+A separate busy-deep probe delivered a newly arriving question in 3.94 seconds while the older deep job continued. The newer quick guidance remained intact after the old job completed. A canary placed outside the supplied snapshot was not disclosed. Native checks verify provisional updates, frozen output, error recovery, settings, transparency, capture-frame geometry and MIDI navigation.
+
+Two paired OCR trials per transport on one generated screenshot preserved the boundary operator, logs and line-number mapping. Exec took 15.41/14.70 seconds; app-server took 15.12/12.13 seconds. An earlier concurrent probe took 20.15 seconds, illustrating variability. The principal capture improvement is avoiding identical-frame calls; do not treat these few timings as a general OCR speed guarantee.
+
+Private run identities: `latency-implementation-20261012` (original paired comparison) and `latency-implementation-fixed-20261012` (final answer-path rerun, preserved source snapshot, separate OCR/audio/busy-worker checks and review page). The answer-path code remained unchanged during its final run; subsequent audio endpointing and JSON-only HTTP contract support were tested separately. Provider load, cache hits and output lengths vary. These are assistant-authored synthetic development checks, not human-calibrated field accuracy.
+
+```sh
+.venv/bin/python -m evals.latency --live --output /tmp/otsc-latency-new-run
+```
+
+This requires existing configured providers, makes live calls on synthetic inputs, and refuses to overwrite a previous output directory. Ordinary unit tests and `python ots.py eval` remain offline. Final verification: 230 unit tests, Ruff, offline corpus checks, and native UI smoke checks passed.
+
+
 ## October 11, 2026 updates
 
 Quick replies use GPT-6 Luna with `none` reasoning and Fast processing. Saved Codex Spark quick settings migrate automatically; the Astra workers retain their separate settings. See the [replacement checks](quick-model-replacement.md).
@@ -42,7 +78,7 @@ The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-ove
 
 Codex runs `exec` against an ephemeral, filtered source snapshot, with read-only sandboxing, no approvals, no user config/rules, and no web search. It reuses CLI authentication. Responses API, Gemini `streamGenerateContent`, Anthropic Messages with a forced structured tool response, and Groq/compatible Chat Completions share the application contract. HTTP failures are surfaced without automatic provider fallback. No extra engine process or app-server migration was introduced.
 
-The Codex adapter disables model-visible shell/executor, browser, image-read, app/connector, memory, and multi-agent capabilities, ignores user configuration/rules, and aborts unexpected tool activity. Inherited permission/session environment variables and environment API keys are removed from the child process. Optional app-level inspection tools read only the immutable supplied snapshot. The trusted CLI process retains its own authentication/runtime access; this is not complete OS isolation of a malicious CLI binary. See the [boundary review](threat-model.md).
+The retained exec adapter disables model-visible shell/executor, browser, image-read, app/connector, memory, and multi-agent capabilities, ignores user configuration/rules, and aborts unexpected tool activity. The default streaming adapter pins those boundaries and clears inherited integrations; see the October 12 update and boundary review. Inherited permission/session environment variables and environment API keys are removed from the child process. Optional app-level inspection tools read only the immutable supplied snapshot. The trusted CLI process retains its own authentication/runtime access; this is not complete OS isolation of a malicious CLI binary. See the [boundary review](threat-model.md).
 
 ## Capture and bounded work
 
@@ -96,7 +132,7 @@ MIDI was initially restored from the baseline mappings, then remapped to the own
 
 ## Practical limits
 
-Other HTTP providers have mocked protocol coverage; their accounts, model support, and quotas were not certified by these Codex runs. Echo, overlapping remote speakers, long sessions, and dense multi-window OCR still need broader field evaluation. The frame gate remains a heuristic. The local ASR installation was exercised on this Apple Silicon Mac; it is an optional dependency for other setups.
+Other HTTP providers have mocked protocol coverage; their accounts, model support, and quotas were not certified by these Codex runs. Echo, overlapping remote speakers, long sessions, and dense multi-window OCR still need broader field evaluation. Exact-frame deduplication is conservative; semantic no-change decisions still depend on the model. The local ASR installation was exercised on this Apple Silicon Mac; it is an optional dependency for other setups.
 
 The owner has deferred `.app` packaging. Run `python ots.py`; it uses the project's environment automatically. Distribution work is outside the active scope.
 

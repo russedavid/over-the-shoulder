@@ -36,6 +36,24 @@ def sample_response(snapshot):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_json_object_provider_receives_a_dynamic_contract_without_native_schema_support(self):
+        schema = {"type": "object", "properties": {"answer_needed": {"type": "boolean"}}, "required": ["answer_needed"]}
+
+        def handle(request):
+            body = json.loads(request.content)
+            prompt = body["messages"][-1]["content"]
+            self.assertIn(json.dumps(schema), prompt)
+            payload = {"choices": [{"delta": {"content": '{"answer_needed":false}'}}]}
+            return httpx.Response(200, text="data: " + json.dumps(payload) + "\n\n")
+
+        provider = HTTPProvider(ModelChoice(provider="compatible", model="test", base_url="https://example.test/v1"),
+                                FakeCredentials(), transport=httpx.MockTransport(handle))
+        context = ContextStore()
+        context.set_goal("Synthetic")
+        output = provider.generate_json(context.snapshot(), "quick", Cancellation(), lambda _: None,
+                                        schema=schema, system="Use supplied evidence", prompt="New request")
+        self.assertEqual(output, {"answer_needed": False})
+
     def test_quick_contract_is_small_and_cannot_generate_an_unannotated_artifact(self):
         from otsc.models import parse_response, response_schema
 

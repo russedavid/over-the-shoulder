@@ -1,6 +1,6 @@
 # Automatic answers only when the task needs an update
 
-September 10, 2026. This addresses repeated deep answers being added to history while the task has not materially changed.
+Updated October 12, 2026. This addresses repeated answers while allowing quick assistance to advance independently.
 
 ## What changed
 
@@ -9,10 +9,10 @@ Previously, the scheduler treated every context revision as a reason to generate
 Automatic refresh now has three checks:
 
 1. The scheduler compares the session and **evidence revision**, rather than interpreting a memory rewrite as fresh input. A context-builder-only change starts no new answer request.
-2. The existing planning call explicitly decides `answer_needed` separately from `reuse_previous`. It compares current OCR, attributed speech, connected file contents, and task context with the previous substantive answer. If that answer remains sufficient, it returns `NoAnswerUpdate` and neither automatic answer generator runs. A new question may require an answer while retaining the same plan.
+2. The combined deep call explicitly decides `answer_needed` separately from `reuse_previous`; the quick call makes its own answer-or-no-change decision against the previous quick reply and substantive answer. It compares current OCR, attributed speech, connected file contents, and task context with the previous substantive answer. If that answer remains sufficient, the lane returns `NoAnswerUpdate` without publishing another answer. A new question may require an answer while retaining the same plan.
 3. If generation still returns identical content, a publication fingerprint suppresses the duplicate. Citation IDs and Plan-review bookkeeping do not make a new answer. Actual artifact content, questions, source utterances, speaker roles, and channels remain significant. Evidence/cache updates can be accepted without republishing the answer.
 
-Initial assistance and **Help now** still start quick and deep work immediately. During later automatic updates, quick assistance waits for the planner to approve an update, then runs alongside deep generation. Help now deliberately bypasses the gate, including when the user wants another pass over unchanged input.
+Initial assistance and **Help now** still start quick and deep work immediately. During later automatic updates, an idle quick lane can process fresh evidence while deep work is still running; neither the planning decision nor the old deep job blocks it. Help now deliberately bypasses the gate, including when the user wants another pass over unchanged input.
 
 Capture, transcription, and context building continue while the answer is held. The output pane and history stay unchanged. The latest refresh reason appears in **Context** and the status line; it is not injected back as new task evidence. In-flight images can finish without generating another answer. No existing history entries are deleted.
 

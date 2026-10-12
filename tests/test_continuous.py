@@ -309,6 +309,9 @@ class ContinuousControllerTests(unittest.TestCase):
         entered, release = threading.Event(), threading.Event()
 
         class Screen:
+            def accept_frame(self, path):
+                self.accepted_path = path
+
             def capture(self, *args, **kwargs):
                 capture_calls.append(time.monotonic())
                 self.assert_full_resolution = kwargs["full_resolution"]
@@ -367,7 +370,7 @@ class ContinuousControllerTests(unittest.TestCase):
             self.assertTrue(controller.screen.assert_full_resolution)
             self.assertLess(capture_calls[2] - capture_calls[0], 1)
             self.assertTrue(any(o.text.startswith("Source frame") for o in context.observations))
-            coordinator.request.assert_not_called()
+            coordinator.request.assert_called()  # An idle quick lane may run beside busy deep work.
             controller.window.orderOut_.assert_not_called()
             controller.window.orderFront_.assert_not_called()
             controller.window.makeKeyAndOrderFront_.assert_not_called()
@@ -416,7 +419,9 @@ class ContinuousControllerTests(unittest.TestCase):
                         raise RuntimeError("Synthetic screenshot failure")
                     if mode == "user_hidden":
                         controller.overlay_hidden = True
-                    return object()
+                    from PIL import Image
+
+                    return Image.new("RGB", (20, 20), "white")
 
                 def interpret(*args, **kwargs):
                     order.append("local_ocr")

@@ -13,7 +13,7 @@ import objc
 from Foundation import NSMakeRect, NSObject, NSTimer
 from PyObjCTools import AppHelper
 
-from otsc.capture import AudioCapture, ScreenCapture
+from otsc.capture import AudioCapture, ScreenCapture, UnchangedScreen
 from otsc.capture_frame import CaptureFrame
 from otsc.code_rendering import artifact_document, commented_code, language_info
 from otsc.code_view import code_scroll
@@ -50,10 +50,11 @@ from otsc.output_browser import (
 )
 from otsc.output_history import OutputHistory
 from otsc.perception import read_screen
-from otsc.planning import TaskPlanningProvider
+from otsc.planning import CombinedTaskProvider, TaskPlanningProvider
 from otsc.preferences import Preferences
 from otsc.privacy import private_write, redact
 from otsc.providers import provider_for
+from otsc.quick import QuickProvider
 from otsc.scheduler import Cancellation, Cancelled, Coordinator
 from otsc.sessions import checkpoint, load_session, restore_context, save_session
 from otsc.settings import Credentials, Settings, load_settings, save_settings
@@ -134,7 +135,7 @@ class Controller(NSObject):
             source=getattr(options, "trace_source", "interactive"),
         )
         self.coordinator = Coordinator(
-            self.context, self.get_provider, hourly_limit=self.settings.hourly_requests, trace=self.trace
+            self.context, self.get_provider, hourly_limit=self.settings.hourly_requests, trace=self.trace, independent_quick=True
         )
         self.output_history = OutputHistory()
         self.browser = OutputBrowser()
@@ -213,8 +214,11 @@ class Controller(NSObject):
         if self.demo:
             return DemoProvider()
         provider = provider_for(getattr(self.settings, lane), self.credentials)
+        if lane == "quick" and hasattr(provider, "generate_json"):
+            return QuickProvider(provider)
         if lane == "deep" and hasattr(provider, "generate_json"):
-            provider = TaskPlanningProvider(provider, provider_for(self.settings.planner, self.credentials))
+            provider = CombinedTaskProvider(provider) if self.settings.combined_deep else TaskPlanningProvider(
+                provider, provider_for(self.settings.planner, self.credentials))
         if lane == "deep" and self.settings.inspection_enabled and hasattr(provider, "generate_json"):
             from otsc.inspection import InspectionProvider
 
@@ -619,6 +623,7 @@ class Controller(NSObject):
     @objc.python_method
     def pause(self):
         self.running = False
+        self.screen.invalidate_frame()
         self.capture_generation += 1
         if self.capture_token:
             self.capture_token.cancel()
@@ -682,14 +687,20 @@ class Controller(NSObject):
                         if hide_for_capture:
                             token.event.wait(0.010)
                             token.check()
-                        _, path = self.screen.capture(
-                            settings.screen_region,
-                            keep_image=True, full_resolution=True, on_captured=finish_capture,
-                        )
+                        try:
+                            _, path = self.screen.capture(
+                                settings.screen_region,
+                                keep_image=True, full_resolution=True, on_captured=finish_capture,
+                                skip_unchanged=request_after,
+                            )
+                        except UnchangedScreen as unchanged:
+                            path = None
+                            result["unchanged_screen"] = True
+                            result["unchanged_frame_path"] = unchanged.path
                 finally:
                     # Also restore on screenshot failure or cancellation before capture.
                     finish_capture()
-                if settings.capture_screen:
+                if settings.capture_screen and path:
                     token.check()
                     progress = Progress(lambda text: None, self.trace, request_id=identity, lane="ocr")
                     reading = read_screen(path, provider_for(settings.ocr, self.credentials), token, progress, at=result["at"])
@@ -785,7 +796,7 @@ class Controller(NSObject):
                 if self.context_builder.request():
                     self.context_build_pending = False
             if (self.running or self.auto_help_pending) and not self.manual_help_pending and not self.voice_recording:
-                if not self.coordinator.active_lanes and now >= self.next_answer_attempt:
+                if now >= self.next_answer_attempt:
                     requested = self.coordinator.request()
                     self.next_answer_attempt = now + (0.1 if requested else 1)
                     if requested or self.context.revision == self.coordinator.last_requested_revision:
@@ -810,6 +821,11 @@ class Controller(NSObject):
             self.capture_token = None
             if event["generation"] != self.capture_generation or event.get("cancelled"):
                 return
+            if event.get("reading") and event.get("screen"):
+                self.screen.accept_frame(event["screen"][1])
+            if event.get("unchanged_screen"):
+                if not self.context.refresh_screen(event.get("unchanged_frame_path", ""), event["at"]):
+                    self.screen.invalidate_frame()  # Missing prior evidence needs a fresh OCR read.
             self.apply_context_event(event)
             if event.get("error"):
                 self.notice_text = event["error"][:350]
@@ -820,7 +836,9 @@ class Controller(NSObject):
                 self.capture_failures = 0
                 # Only error retries and screen-disabled project polling wait.
                 # Successful visual reading starts the next fresh frame immediately.
-                self.next_capture = 0 if self.settings.capture_screen else time.monotonic() + self.settings.interval_seconds
+                self.next_capture = (time.monotonic() + self.settings.unchanged_screen_poll_seconds
+                                     if event.get("unchanged_screen") else 0) if self.settings.capture_screen \
+                    else time.monotonic() + self.settings.interval_seconds
                 self.context_build_pending = True
             self.status.setStringValue_(
                 event.get("error") or event.get("files_message") or "Current screen added to context."
@@ -886,21 +904,20 @@ class Controller(NSObject):
                 "Checking whether new evidence warrants another answer…" if event.get("reviewing")
                 else f"Quick and deep assistance started · context {event['revision']}."
             )
-        elif (kind == "progress" and event["request_id"] == self.coordinator.request_id
+        elif (kind == "progress" and self.coordinator.event_is_current(event)
               and event["lane"] in self.coordinator.active_lanes):
             self.status.setStringValue_(event["lane"].capitalize() + ": " + event["message"][:280])
             if (
                 event["lane"] == "quick"
-                and event["message"].startswith("Draft: ")
+                and event["message"].startswith(("Draft: ", "Reply draft: "))
                 and not self.browser.frozen
-                and self.browser.active_key in {"", GUIDANCE}
-                and self.browser.visible is None
+                and self.browser.active_key in ({REPLIES} if event["message"].startswith("Reply draft: ") else {"", GUIDANCE})
                 and not self.output_text().selectedRange().length
-                and self.coordinator.published_lane < 1
                 and self.context.task_revision == self.coordinator.last_requested_task_revision
             ):
-                self.output_title.setStringValue_("Quick guidance · Draft")
-                retain_text(self.body, event["message"][7:])
+                reply = event["message"].startswith("Reply draft: ")
+                self.output_title.setStringValue_("Suggested reply · Draft" if reply else "Quick guidance · Draft")
+                retain_text(self.body, event["message"][13 if reply else 7:])
         elif kind in {"result", "error", "cancelled", "unchanged"}:
             if not self.coordinator.accept(event):
                 return
@@ -1826,6 +1843,9 @@ class Controller(NSObject):
         if self.midi:
             self.midi.close()
         self.screen.close()
+        from otsc.codex_server import close_servers
+
+        close_servers()
         if self.capture_selector:
             self.capture_selector.dispose()
             self.capture_selector = None

@@ -31,14 +31,14 @@ class Preferences(NSObject):
         scroll = A.NSScrollView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 740))
         scroll.setHasVerticalScroller_(True)
         scroll.setAutohidesScrollers_(True)
-        root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 1120))
+        root = FlippedView.alloc().initWithFrame_(NSMakeRect(0, 0, 920, 1200))
         scroll.setDocumentView_(root)
         self.window.setContentView_(scroll)
         frame(label(root, "Choose the models that work beside you", size=21, bold=True), 24, 18, 860, 30)
         frame(
             label(
                 root,
-                "Quick replies arrive while deeper work is planned. Scroll for planning and image models. API keys stay in Keychain.",
+                "Quick replies run independently. Codex streams responses using your existing sign-in. API keys stay in Keychain.",
             ),
             24,
             52,
@@ -47,7 +47,7 @@ class Preferences(NSObject):
         )
         for lane, x, offset in [("quick", 24, 0), ("deep", 474, 0), ("planner", 24, 570), ("image", 474, 570)]:
             choice = getattr(controller.settings, lane)
-            title = {"planner": "Task planning and ongoing review", "image": "Generated images"}.get(lane, lane.capitalize() + " response")
+            title = {"planner": "Separate planner (when combined mode is off)", "image": "Generated images"}.get(lane, lane.capitalize() + " response")
             frame(label(root, title, size=16, bold=True), x, 95 + offset, 420, 26)
             fields = {}
             fields["provider"] = popup(root, ["openai", "compatible"] if lane == "image" else PROVIDERS, choice.provider)
@@ -85,6 +85,7 @@ class Preferences(NSObject):
             ("capture_screen", "Screen + OCR", 24),
             ("microphone", "Microphone", 220),
             ("system_audio", "System audio", 450),
+            ("audio_endpointing", "Flush at pauses", 680),
         ]:
             item = button(root, title, self, "noop:", checkbox=True)
             item.setState_(int(getattr(s, key)))
@@ -108,7 +109,7 @@ class Preferences(NSObject):
         for key, title, value, x, width in [
             ("interval_seconds", "Project poll (s)", str(s.interval_seconds), 24, 210),
             ("hourly_requests", "Requests / hour", str(s.hourly_requests), 270, 255),
-            ("audio_chunk_seconds", "Audio chunk (s)", str(s.audio_chunk_seconds), 570, 325),
+            ("audio_chunk_seconds", "Max audio (s)", str(s.audio_chunk_seconds), 570, 325),
         ]:
             frame(label(root, title), x, 541, 135, 25)
             self.fields[key] = field(root, value)
@@ -126,7 +127,7 @@ class Preferences(NSObject):
         frame(
             label(
                 root,
-                "Core Audio records system sound without a screen stream. Audio roles are channel hints. Screen OCR repeats after each result.",
+                "Core Audio records system sound without a screen stream. Audio roles are channel hints. Unchanged screens skip OCR.",
             ),
             24,
             613,
@@ -135,9 +136,13 @@ class Preferences(NSObject):
         )
         self.status = label(root, "")
         frame(label(root, "Image generation uses the configured image API account. Text arrives while images render; unchanged designs reuse the existing image."), 24, 975, 868, 42)
-        frame(self.status, 24, 1040, 635, 60)
-        frame(button(root, "Cancel", self, "cancel:"), 675, 1060, 96, 32)
-        frame(button(root, "Save settings", self, "save:"), 781, 1060, 114, 32)
+        combined = self.fields["combined_deep"] = button(root, "Review the plan and generate deep output in one call", self, "noop:", checkbox=True)
+        combined.setState_(int(s.combined_deep))
+        frame(combined, 24, 1024, 850, 28)
+        frame(label(root, "Combined mode uses the deep model. Turn it off to use the separate planner configured above."), 24, 1056, 868, 36)
+        frame(self.status, 24, 1100, 635, 70)
+        frame(button(root, "Cancel", self, "cancel:"), 675, 1140, 96, 32)
+        frame(button(root, "Save settings", self, "save:"), 781, 1140, 114, 32)
         self.window.center()
         return self
 
@@ -169,6 +174,7 @@ class Preferences(NSObject):
                     reasoning=str(fields["reasoning"].stringValue()).strip(),
                     send_images=bool(fields["images"].state()),
                     fast_mode=bool(fields["fast"].state()),
+                    codex_transport=getattr(settings, lane).codex_transport,
                 )
                 if choice.provider not in {"disabled", "codex"} and not choice.model:
                     raise ValueError(f"Enter the {lane} model name")
@@ -178,7 +184,7 @@ class Preferences(NSObject):
                 secret = str(fields["key"].stringValue()).strip()
                 if secret:
                     credentials.append((choice, lane, secret))
-            for key in ("capture_screen", "microphone", "system_audio"):
+            for key in ("capture_screen", "microphone", "system_audio", "combined_deep", "audio_endpointing"):
                 setattr(settings, key, bool(self.fields[key].state()))
             for key in ("microphone_role", "system_role", "transcription", "system_audio_backend"):
                 setattr(settings, key, str(self.fields[key].titleOfSelectedItem()))
@@ -197,7 +203,7 @@ class Preferences(NSObject):
             settings.configured = True
             if settings.quick.provider == settings.deep.provider == "disabled":
                 raise ValueError("Enable at least one response provider")
-            if settings.deep.provider != "disabled" and settings.planner.provider == "disabled":
+            if not settings.combined_deep and settings.deep.provider != "disabled" and settings.planner.provider == "disabled":
                 raise ValueError("Enable a planning model for deep responses")
             settings = type(settings).model_validate(settings.model_dump())
             for choice, lane, secret in credentials:

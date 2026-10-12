@@ -28,7 +28,7 @@ Every generated code artifact needs line-by-line teaching annotations and a sepa
 
 Observed screen/OCR fragments, spoken claims, inferred hypotheses, and verified local files are different evidence. Preserve provenance, completeness, and version. Never present a guessed complete filesystem as an observed one. Suggestions against a partial observation must say so.
 
-Fast and deep results must be bound to the same task/context revision. Stale results must not overwrite newer work or pinned artifacts. Window resizing is a rendering operation, not a reason to regenerate an answer.
+Every fast/deep job must retain its immutable task/context snapshot. Jobs launched together share it; an idle quick lane may advance while deep work is still running. Stale results must not overwrite newer work or pinned artifacts. Older deep jobs may publish useful artifacts but must not replace a newer quick reply. The quick and combined-deep calls each decide answer/no-change before producing outputs. Do not restore the planner-before-quick dependency. Window resizing is a rendering operation, not a reason to regenerate an answer.
 
 Do not start capture or model calls on import. Keep source control free of credentials, raw captures, session recordings, and generated runtime output. Use synthetic fixtures for replay tests. Keys belong in an appropriate credential store; logs must redact them.
 

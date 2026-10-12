@@ -93,7 +93,7 @@ def answer_fingerprint(response, observations=()):
 
 
 class Coordinator:
-    def __init__(self, context: ContextStore, provider_for_lane, *, hourly_limit=120, trace=None):
+    def __init__(self, context: ContextStore, provider_for_lane, *, hourly_limit=120, trace=None, independent_quick=False):
         self._state_lock = threading.RLock()
         self.context, self.provider_for_lane = context, provider_for_lane
         self.events = queue.Queue()
@@ -118,12 +118,20 @@ class Coordinator:
         self.hourly_limit = hourly_limit
         self.active_lanes = set()
         self.trace = trace
+        self.independent_quick = independent_quick
+        self.lane_jobs = {}
+        self.lane_evidence = {}
+        self.previous_quick = None
+        self.deep_published_evidence = None
+        self.quick_published_evidence = None
         self.artifact_bases = {}
         for lane in self.queues:
             threading.Thread(target=self._worker, args=(lane,), daemon=True, name="otsc-" + lane).start()
 
     @serialized
     def request(self, *, manual=False):
+        if self.independent_quick:
+            return self.request_independent(manual=manual)
         if self.closed:
             return False
         if not manual and self.active_lanes:
@@ -182,9 +190,75 @@ class Coordinator:
             pending.put_nowait(Job(self.request_id, snapshot, lane, token))
         return True
 
+    def request_independent(self, *, manual=False):
+        if self.closed:
+            return False
+        snapshot = replace(self.context.snapshot(), automatic_refresh=not manual)
+        if not snapshot.observations:
+            if manual:
+                self.events.put({"type": "notice", "message": "Add task context or capture the current work first."})
+            return False
+        key = (snapshot.session_id, snapshot.evidence_revision)
+        lanes = [lane for lane in self.queues if manual or (
+            lane not in self.active_lanes and self.lane_evidence.get(lane) != key)]
+        if not lanes:
+            return False
+        now = time.monotonic()
+        self.calls = [t for t in self.calls if now - t < 3600]
+        if len(self.calls) >= self.hourly_limit:
+            if manual or now >= self.limit_notice_at:
+                self.events.put({"type": "notice", "message": "The configured hourly assistance limit has been reached."})
+                self.limit_notice_at = now + 60
+            return False
+        if manual:
+            self.cancel()
+        if self.previous_quick and self.previous_quick[0] == snapshot.session_id:
+            snapshot = replace(snapshot, previous_quick_answer=self.previous_quick[1])
+        self.request_id = uuid4().hex
+        self.last_requested_revision = snapshot.revision
+        self.last_requested_task_revision = snapshot.task_revision
+        self.last_evidence_key = key
+        self.calls.append(now)
+        self.events.put({"type": "started", "request_id": self.request_id, "revision": snapshot.revision, "reviewing": False})
+        if self.trace:
+            self.trace.record("request_started", request_id=self.request_id, session_id=snapshot.session_id,
+                              revision=snapshot.revision, observations=len(snapshot.observations),
+                              files=len(json.loads(snapshot.verified_files)), snapshot_hash=digest(snapshot.prompt_context()))
+        for lane in lanes:
+            pending = self.queues[lane]
+            try:
+                old = pending.get_nowait()
+                if old:
+                    old.token.cancel()
+            except queue.Empty:
+                pass
+            job = Job(self.request_id, snapshot, lane, Cancellation())
+            self.lane_jobs[lane] = job
+            self.lane_evidence[lane] = key
+            self.active_lanes.add(lane)
+            self.tokens.append(job.token)
+            pending.put_nowait(job)
+        self.quick_started = "quick" in self.active_lanes
+        return True
+
+    def event_is_current(self, event):
+        job = event.get("job")
+        if self.independent_quick:
+            current = self.lane_jobs.get(event.get("lane") or (job.lane if job else ""))
+            if current and current.lane == "quick" and self.deep_published_evidence:
+                version = (current.snapshot.session_id, current.snapshot.task_revision, current.snapshot.evidence_revision)
+                if version[:2] == self.deep_published_evidence[:2] and version[2] <= self.deep_published_evidence[2]:
+                    return False
+            return bool(current and (job is None or current is job) and current.request_id == event.get("request_id", current.request_id)
+                        and not current.token.event.is_set() and current.snapshot.session_id == self.context.session_id
+                        and current.snapshot.task_revision == self.context.task_revision)
+        return event.get("request_id", job.request_id if job else None) == self.request_id
+
     @serialized
     def allow_quick(self, job):
         """Only the still-current approved refresh can release its quick worker."""
+        if self.independent_quick:
+            return
         if self.closed or job.token.event.is_set():
             return
         if (job.request_id != self.request_id or job.snapshot.session_id != self.context.session_id
@@ -220,7 +294,7 @@ class Coordinator:
                     self.trace.record("generation_started", **fields)
                 progress = Progress(
                     lambda text: self.events.put(
-                        {"type": "progress", "request_id": job.request_id, "lane": lane, "message": redact(text)}
+                        {"type": "progress", "request_id": job.request_id, "lane": lane, "job": job, "message": redact(text)}
                     ),
                     self.trace,
                     **fields,
@@ -292,7 +366,8 @@ class Coordinator:
     @serialized
     def accept(self, event):
         job = event.get("job")
-        if not job or job.request_id != self.request_id or job.snapshot.session_id != self.context.session_id:
+        current = self.lane_jobs.get(job.lane) is job if job and self.independent_quick else bool(job and job.request_id == self.request_id)
+        if not job or not current or job.snapshot.session_id != self.context.session_id:
             if job and self.trace:
                 self.trace.record(
                     "result_discarded", request_id=job.request_id, lane=job.lane, reason="superseded_request"
@@ -300,6 +375,8 @@ class Coordinator:
             return False
         if event["type"] in {"result", "error", "cancelled", "unchanged"}:
             self.active_lanes.discard(job.lane)
+            if self.independent_quick:
+                self.tokens = [token for token in self.tokens if token is not job.token]
         # New passive evidence is for the next request. It must not starve the
         # current answer. Explicit task/project edits and newer requests still
         # invalidate old work; each delivered artifact keeps its immutable base.
@@ -320,7 +397,10 @@ class Coordinator:
                 self.last_refresh_reason = "The refresh could not complete: " + event["message"]
             return True
         rank = {"quick": 0, "deep": 1}[job.lane]
-        if rank < self.published_lane:
+        version = (job.snapshot.session_id, job.snapshot.task_revision, job.snapshot.evidence_revision)
+        late_quick = (job.lane == "quick" and self.deep_published_evidence is not None
+                      and version[:2] == self.deep_published_evidence[:2] and version[2] <= self.deep_published_evidence[2])
+        if (self.independent_quick and late_quick) or (not self.independent_quick and rank < self.published_lane):
             if self.trace:
                 self.trace.record(
                     "result_discarded", request_id=job.request_id, lane=job.lane, reason="late_quick_response"
@@ -336,6 +416,10 @@ class Coordinator:
         self.context.integrate(response, replace_open_questions=job.lane == "deep", sources=job.snapshot.observations)
         if job.lane == "quick":
             self.last_quick_publication = (job.snapshot.session_id, fingerprint)
+            self.previous_quick = (job.snapshot.session_id, response.model_dump_json(exclude={"artifacts", "observed_files"}))
+            self.quick_published_evidence = version
+        else:
+            self.deep_published_evidence = version
         if response._refresh_reason:
             self.last_refresh_reason = response._refresh_reason
         files = json.loads(job.snapshot.verified_files)
@@ -356,6 +440,15 @@ class Coordinator:
                 self.trace.record("answer_retained", request_id=job.request_id, lane=job.lane,
                                   reason="duplicate_output", result_hash=fingerprint)
             return True
+        if (self.independent_quick and job.lane == "deep" and self.quick_published_evidence
+                and version[:2] == self.quick_published_evidence[:2] and version[2] < self.quick_published_evidence[2]):
+            # An older deep job may finish useful code without rolling a newer
+            # immediate reply back. Its full answer remains in task memory.
+            response = response.model_copy(update={"conversation": [], "summary": ""}, deep=True)
+            event["response"] = response
+            if not any(a.id != "_assistance_plan" for a in response.artifacts):
+                event["duplicate"] = True
+                return True
         if self.current:
             self.history.append(self.current)
             self.history = self.history[-12:]
@@ -388,13 +481,15 @@ class Coordinator:
     def toggle_pin(self):
         self.pinned = not self.pinned
         if not self.pinned and self.pending:
-            if self.pending_version == (self.request_id, self.context.session_id, self.context.task_revision):
+            request_ids = {job.request_id for job in self.lane_jobs.values()} if self.independent_quick else {self.request_id}
+            if self.pending_version and self.pending_version[0] in request_ids and self.pending_version[1:] == (self.context.session_id, self.context.task_revision):
                 self.current = self.pending
             self.pending, self.pending_version = None, None
 
     @serialized
     def cancel(self):
         self.active_lanes.clear()
+        self.lane_jobs.clear()
         for token in self.tokens:
             token.cancel()
         self.tokens.clear()

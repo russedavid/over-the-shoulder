@@ -195,6 +195,9 @@ class HTTPProvider:
         return prepare_response(raw, snapshot, lane, token, progress, provider=self)
 
     def generate_json(self, snapshot, lane, token, progress, *, schema, system, prompt):
+        if self.choice.provider in {"groq", "compatible"} and "\n\nRESPONSE SCHEMA\n" not in prompt:
+            # JSON-object-only endpoints also need the dynamically chosen contract.
+            prompt += "\n\nRESPONSE SCHEMA\n" + json.dumps(schema)
         key = self.credentials.get(self.choice, lane)
         if not key and self.choice.provider != "compatible":
             raise ValueError(f"Add the {lane} {self.choice.provider} API key in Settings")
@@ -236,7 +239,7 @@ class HTTPProvider:
                     text += event_text(self.choice.provider, event)
                     if len(text) > 200000:
                         raise RuntimeError("Response exceeded the app's size limit")
-                    current = summary_preview(text)
+                    current = getattr(progress, "preview_parser", summary_preview)(text)
                     if current and current != preview:
                         preview = current
                         progress("Draft: " + preview)
