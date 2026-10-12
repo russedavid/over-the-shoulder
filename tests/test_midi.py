@@ -16,8 +16,8 @@ class MidiTests(unittest.TestCase):
         controller = MidiInput(events)
         expected = {
             36: "older_output", 37: "newer_output",
-            38: "help", 39: "follow", 40: "pin", 41: "visibility",
-            42: "view_artifact", 43: "new_task", 44: "previous_artifact", 45: "next_artifact", 46: "smaller",
+            38: "help", 39: "follow", 40: "pin", 41: "new_task",
+            42: "view_artifact", 43: "visibility", 44: "previous_artifact", 45: "next_artifact", 46: "smaller",
             47: "view_conversation", 48: "page_up", 49: "up", 50: "page_down", 51: "bigger",
             52: "view_context", 53: "left", 54: "down", 55: "right",
             56: "view_files", 57: "copy_clean", 58: "center", 59: "capture", 60: "latest_output",
@@ -103,7 +103,7 @@ class MidiTests(unittest.TestCase):
             backend.names = ["unrelated", "controller"]
             eventually(lambda: len(backend.ports) == 1)
             self.assertEqual(backend.ports[0].name, "controller")
-            backend.ports[0].callback(note(41))
+            backend.ports[0].callback(note(43))
             backend.names = []
             eventually(lambda: backend.ports[0].closed)
             backend.names = ["controller"]

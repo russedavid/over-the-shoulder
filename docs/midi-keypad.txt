@@ -2,12 +2,12 @@ MIDI channel 1. Bracketed numbers are MIDI note numbers.
 
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | KNOB              | Circle [38]     | Triangle [39]   | Square [40]     | X [41]          |
-| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | Show/hide       |
+| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | New task        |
 | CW 37: Newer      |                 |                 |                 |                 |
 | Press: MIDI/keys  |                 |                 |                 |                 |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M1 [42]           | Num/Clear [43]  | / [44]          | * [45]          | - [46]          |
-| Outputs           | New task        | Prev type       | Next type       | Smaller         |
+| Outputs           | Show/hide       | Prev type       | Next type       | Smaller         |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M2 [47]           | 7 [48]          | 8 [49]          | 9 [50]          | + [51]          |
 | Replies           | Page up         | Move up         | Page down       | Bigger          |

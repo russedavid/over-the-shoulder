@@ -12,9 +12,9 @@ NOTE_ACTIONS = {
     38: "help",               # Circle
     39: "follow",             # Triangle
     40: "pin",                # Square
-    41: "visibility",         # X
+    41: "new_task",           # X
     42: "view_artifact",      # M1
-    43: "new_task",           # Num/Clear
+    43: "visibility",         # Num/Clear
     44: "previous_artifact",  # /
     45: "next_artifact",      # *
     46: "smaller",            # -

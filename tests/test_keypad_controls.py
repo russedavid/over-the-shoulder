@@ -47,7 +47,7 @@ class KeypadControllerTests(unittest.TestCase):
     def test_history_assistance_and_visibility_keys_reach_the_native_handlers(self):
         for number, method in {
             36: "olderOutput_", 37: "newerOutput_", 38: "helpNow_", 39: "toggleRunning_", 40: "togglePin_",
-            41: "toggleVisibility_", 43: "newTask_", 57: "copyClean_", 59: "captureNow_",
+            41: "newTask_", 43: "toggleVisibility_", 57: "copyClean_", 59: "captureNow_",
             60: "latestOutput_", 63: "toggleClickThrough_",
         }.items():
             with self.subTest(note=number):

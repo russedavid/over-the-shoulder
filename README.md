@@ -85,12 +85,12 @@ MIDI channel 1. Bracketed numbers are MIDI note numbers.
 
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | KNOB              | Circle [38]     | Triangle [39]   | Square [40]     | X [41]          |
-| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | Show/hide       |
+| CCW 36: Older     | Help now        | Follow/pause    | Freeze/unfreeze | New task        |
 | CW 37: Newer      |                 |                 |                 |                 |
 | Press: MIDI/keys  |                 |                 |                 |                 |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M1 [42]           | Num/Clear [43]  | / [44]          | * [45]          | - [46]          |
-| Outputs           | New task        | Prev type       | Next type       | Smaller         |
+| Outputs           | Show/hide       | Prev type       | Next type       | Smaller         |
 +-------------------+-----------------+-----------------+-----------------+-----------------+
 | M2 [47]           | 7 [48]          | 8 [49]          | 9 [50]          | + [51]          |
 | Replies           | Page up         | Move up         | Page down       | Bigger          |
@@ -114,10 +114,10 @@ OTSC listens on **MIDI channel 1** (channel `0` in mido). Only note-on messages 
 | Circle | 38 | Help now. |
 | Triangle | 39 | Start / pause following. |
 | Square | 40 | Freeze / unfreeze output. |
-| X | 41 | Show / hide window. |
+| X | 41 | Clear and start a new task. |
 | M1 / M2 | 42 / 47 | Return to actionable outputs / suggested replies (or quick guidance); leave Debug. |
 | M3 / M4 / M5 | 52 / 56 / 61 | Enter Debug and select Context / Observed files / Events. |
-| Num/Clear | 43 | Clear and start a new task. |
+| Num/Clear | 43 | Show / hide window. |
 | / and * | 44 / 45 | Previous / next output type; preserve each type's viewing position. |
 | - and + | 46 / 51 | Shrink / enlarge in 50-pixel steps, respecting minimum size. |
 | 7 and 9 | 48 / 50 | Page up / down in the current pane; freeze it and stop at its edges. |
