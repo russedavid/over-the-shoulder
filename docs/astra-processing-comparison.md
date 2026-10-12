@@ -44,7 +44,7 @@ Low/Fast saved **2.659 seconds (11.02%)** in this pair and produced about 14% fe
 
 ## Current settings and reproduction
 
-The app uses **GPT-5.3 Codex Spark / low** for quick responses and **GPT-6 Astra / medium / Fast** for deep responses. Fast is a saved per-model setting with a native Settings checkbox; it is independent of reasoning effort. The higher credit rate was explicitly accepted. The old implicit Standard Astra/medium profile migrates to Fast, while an explicitly saved Standard choice and custom models remain intact. The older GPT-5.5/low profile still migrates on launch, including after an old running window saves its settings on exit.
+At this comparison checkpoint, the app used **GPT-5.3 Codex Spark / low** for quick responses and **GPT-6 Astra / medium / Fast** for deep responses. Fast is a saved per-model setting with a native Settings checkbox; it is independent of reasoning effort. The higher credit rate was explicitly accepted. The old implicit Standard Astra/medium profile migrates to Fast, while an explicitly saved Standard choice and custom models remain intact. The older GPT-5.5/low profile still migrates on launch, including after an old running window saves its settings on exit.
 
 New Astra reference-drafting calls use medium, and judges retain low; their processing remains Standard unless explicitly configured otherwise. Existing evaluation outputs and their original settings are preserved. The generic live-eval command now defaults to medium/Fast generation; `--no-fast` requests Standard and `--reasoning low` requests lower effort. Completed evaluation manifests remain unchanged.
 

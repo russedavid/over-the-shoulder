@@ -4,6 +4,7 @@ import io
 import queue
 import re
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,13 @@ class ScreenCapture:
     def capture(self, region=None, *, keep_image=False, on_captured=None, full_resolution=False):
         import pyautogui
 
+        if region is None and sys.platform == "darwin":
+            import Quartz
+
+            # An explicit primary rectangle keeps Pillow/screencapture on one
+            # output image instead of leaving extra files for other displays.
+            bounds = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+            region = tuple(int(n) for n in (*bounds.origin, *bounds.size))
         image = pyautogui.screenshot(region=region)
         if on_captured:
             on_captured()

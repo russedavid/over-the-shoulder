@@ -45,6 +45,7 @@ def smoke_tick(c):
             if response.artifacts[0].kind != "code":
                 return
             check_code(c, directory, response)
+            check_capture_frame(c, directory)
             c.smoke_step = 1
             c.load_demo(True)
         elif c.smoke_step == 1 and response.artifacts[0].kind == "diagram":
@@ -81,6 +82,10 @@ def smoke_tick(c):
                     "restoring old viewing positions does not roll back live model context",
                     "legacy diagram rendering and provider settings remain available",
                     "UI navigation, Debug and resize make no inference or capture calls",
+                    "transparent capture frame moves/resizes on every connected display without inference",
+                    "frame close preserves region, reopening restores it, primary-display reset clears it",
+                    "capture frame excluded from screenshots; border outside the clear captured interior",
+                    "toolbar wraps at the minimum window width without hiding capture controls",
                 ],
             }, indent=2))
             c.quit_(None)
@@ -93,6 +98,54 @@ def smoke_tick(c):
         import os
 
         os._exit(1)
+
+
+def check_capture_frame(c, directory):
+    from otsc.capture_frame import display_rects
+    from otsc.capture_region import FRAME_INSET, region_from_rect
+
+    before = c.context.revision
+    with patch.object(c.coordinator, "request") as inference, patch.object(c.screen, "capture") as capture:
+        c.captureWindow_(None)
+        selector = c.capture_selector
+        assert selector.window.isVisible()
+        assert selector.window.sharingType() == A.NSWindowSharingNone
+        assert not selector.window.isOpaque() and selector.window.alphaValue() == 1
+        screens = display_rects()
+        primary_top = screens[0][1] + screens[0][3]
+        for x, y, _, _ in screens:
+            # Programmatic native move/resize uses real attached-screen positions.
+            target = (x + 120, y + 160, 600, 360)
+            inset = FRAME_INSET
+            box = A.NSMakeRect(target[0] - inset, target[1] - inset, target[2] + 2 * inset, target[3] + 2 * inset)
+            selector.window.setFrame_display_(selector.window.frameRectForContentRect_(box), True)
+            selector.changed()
+            assert c.settings.screen_region == region_from_rect(target, primary_top)
+        bitmap = selector.view.bitmapImageRepForCachingDisplayInRect_(selector.view.bounds())
+        selector.view.cacheDisplayInRect_toBitmapImageRep_(selector.view.bounds(), bitmap)
+        png = bytes(bitmap.representationUsingType_properties_(A.NSBitmapImageFileTypePNG, {}))
+        private_write(directory / "capture-frame.png", png)
+        im = Image.open(io.BytesIO(png)).convert("RGBA")
+        assert im.getpixel((im.width // 2, im.height // 2))[3] == 0
+        assert max(im.getchannel("A").getextrema()) == 255
+        saved = c.settings.screen_region
+        assert selector.windowShouldClose_(None) is False
+        assert not selector.window.isVisible() and c.settings.screen_region == saved
+        c.captureWindow_(None)
+        assert c.capture_selector.window.isVisible() and c.settings.screen_region == saved
+        c.capturePrimaryDisplay_(None)
+        assert c.settings.screen_region is None and c.capture_selector is None
+        c.window.setContentSize_((760, 520))
+        for control in c.controls.values():
+            if not control.isHidden():
+                rect = control.frame()
+                assert rect.origin.x >= 0 and rect.origin.x + rect.size.width <= c.root.bounds().size.width
+        assert c.controls["capture_window"].frame().origin.y < c.types_label.frame().origin.y
+        c.save_view_image(directory / "narrow-toolbar.png")
+        c.window.setContentSize_((1100, 800))
+        assert c.context.revision == before
+        inference.assert_not_called()
+        capture.assert_not_called()
 
 
 def check_code(c, directory, original):

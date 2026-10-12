@@ -1,6 +1,16 @@
-# Spark replacement investigation — September 12, 2026
+# Quick-response model replacement
 
-**Recommendation: GPT-5.6 Terra with `none` reasoning and Fast processing is a viable replacement candidate for the quick-answer role.** The current application setting remains Spark pending the replacement decision. This investigation does not change the deep, OCR, context, or planning models.
+## Active configuration — October 11, 2026
+
+Quick replies now use **GPT-6 Luna / none / Fast**, through the existing Codex sign-in. The saved Spark quick configuration migrates on load, including if an older running application writes its old settings on exit. Non-Spark choices, other providers, and the deep/OCR/context/planning configuration are preserved.
+
+Three live synthetic quick-response checks passed the existing schema and source validation and correctly cited the other participant: missing readings versus zero, the exact HTTP 500–599 boundary, and uncertainty about a function body that is not visible. Response times were 9.48, 5.60, and 6.51 seconds. This small assistant-reviewed compatibility check is not a general quality or latency benchmark. No microphone, screen, private recording, or API key was used.
+
+[OpenAI’s model guide](https://learn.chatgpt.com/docs/models) confirms Spark’s retirement and Luna’s Codex availability. The [Luna API reference](https://developers.openai.com/api/docs/models/gpt-6-luna) documents `none` reasoning; the live application calls verified that setting with this Codex client/account.
+
+## Earlier investigation — September 12, 2026
+
+**Recommendation: GPT-5.6 Terra with `none` reasoning and Fast processing is a viable replacement candidate for the quick-answer role.** At that checkpoint, the application remained on Spark pending a replacement decision. This investigation does not change the deep, OCR, context, or planning models.
 
 ## Instant, none, and Fast
 
@@ -42,4 +52,4 @@ Private run directories:
 
 All judgments are assistant-authored and provisional. Saved responses are evidence for review, not human gold labels. No held-out evaluation examples were consumed or tuned against. Raw outputs remain outside Git.
 
-The official [Codex model guide](https://learn.chatgpt.com/docs/models) still lists Spark as a research preview. This investigation did not establish a published Spark-specific retirement date; it must not conflate the documented `gpt-5.3-codex` deprecation with `gpt-5.3-codex-spark`.
+At the time of the investigation, the official [Codex model guide](https://learn.chatgpt.com/docs/models) listed Spark as a research preview. This investigation did not establish a published Spark-specific retirement date; it must not conflate the documented `gpt-5.3-codex` deprecation with `gpt-5.3-codex-spark`.

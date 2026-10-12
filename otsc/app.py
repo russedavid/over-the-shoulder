@@ -14,6 +14,7 @@ from Foundation import NSMakeRect, NSObject, NSTimer
 from PyObjCTools import AppHelper
 
 from otsc.capture import AudioCapture, ScreenCapture
+from otsc.capture_frame import CaptureFrame
 from otsc.code_rendering import artifact_document, commented_code, language_info
 from otsc.code_view import code_scroll
 from otsc.context import ContextStore
@@ -153,6 +154,7 @@ class Controller(NSObject):
         self.loaded_base_hashes = {}
         self.restored_artifact_keys = set()
         self.task_details_window = None
+        self.capture_selector = None
         self.screen = ScreenCapture()
         self.audio = None
         self.midi = None
@@ -245,6 +247,7 @@ class Controller(NSObject):
         for name, title, action in [
             ("help", "Help now", "helpNow:"),
             ("capture", "Capture now", "captureNow:"),
+            ("capture_window", "Capture window", "captureWindow:"),
             ("start", "Start following", "toggleRunning:"),
             ("settings", "Settings", "settings:"),
             ("project", "Project…", "selectProject:"),
@@ -256,6 +259,9 @@ class Controller(NSObject):
             self.controls[name] = button(self.root, title, self, action, checkbox=name == "debug")
         self.controls["sharing"].setToolTip_(
             "Off: visible to you, excluded from this app's screenshots. On: allow sharing; hide briefly for this app's captures. Starts Off each launch."
+        )
+        self.controls["capture_window"].setToolTip_(
+            "Drag and resize a transparent capture frame on any display. Close it to keep the selected area."
         )
         self.goal = field(
             self.root,
@@ -343,6 +349,8 @@ class Controller(NSObject):
         for title, action, key in [
             ("Help now", "helpNow:", "\r"),
             ("Settings…", "settings:", ","),
+            ("Show / hide capture window", "captureWindow:", ""),
+            ("Capture primary display", "capturePrimaryDisplay:", ""),
             ("Toggle click-through", "toggleClickThrough:", "i"),
             ("Toggle debug view", "toggleDebug:", "d"),
             ("Hide / show window", "toggleVisibility:", ""),
@@ -393,14 +401,17 @@ class Controller(NSObject):
         if not hasattr(self, "status"):
             return
         w, h = self.root.bounds().size
-        x = 12
-        for name, width in [("help", 88), ("start", 130), ("capture", 100), ("task", 72), ("new", 86), ("settings", 82), ("debug", 76)]:
-            frame(self.controls[name], x, 12, width, 30)
+        x, toolbar_y = 12, 12
+        for name, width in [("help", 88), ("start", 130), ("capture", 100), ("capture_window", 136),
+                            ("task", 72), ("new", 86), ("settings", 82), ("debug", 76)]:
+            if x + width > w - 12:
+                x, toolbar_y = 12, toolbar_y + 36
+            frame(self.controls[name], x, toolbar_y, width, 30)
             x += width + 4
         expanded = self.composer_open or self.debug_mode
         for control in (self.goal, self.source, self.add_button, self.input_scroll, self.controls["project"], self.controls["sharing"]):
             control.setHidden_(not expanded)
-        top = 58
+        top = toolbar_y + 46
         if expanded:
             frame(self.goal, 16, top, w - 250, 28)
             frame(self.controls["project"], w - 226, top, 100, 28)
@@ -458,7 +469,11 @@ class Controller(NSObject):
     @objc.python_method
     def apply_settings(self, settings):
         self.pause()
+        if self.capture_selector:
+            self.capture_selector.dispose()
+            self.capture_selector = None
         self.settings = settings
+        self.controls["capture_window"].setTitle_("Capture window")
         self.notice_text = ""
         self.trace.enabled = settings.operational_metadata and not self.demo
         self.coordinator.hourly_limit = settings.hourly_requests
@@ -473,6 +488,8 @@ class Controller(NSObject):
             )
             return
         self.pause()
+        if self.capture_selector and self.capture_selector.window.isVisible():
+            self.capture_selector.hide()
         self.preferences = Preferences.alloc().initWithController_(self)
         self.preferences.window.makeKeyAndOrderFront_(None)
 
@@ -538,6 +555,37 @@ class Controller(NSObject):
             )
             return
         self.capture_context(request_after=False)
+
+    def captureWindow_(self, sender):
+        if self.capture_selector and self.capture_selector.window.isVisible():
+            self.capture_selector.hide()
+            return
+        if self.capture_selector is None:
+            self.capture_selector = CaptureFrame.alloc().initWithController_(self)
+        self.capture_selector.show(self.settings.screen_region)
+
+    @objc.python_method
+    def set_capture_region(self, region, *, persist):
+        self.settings.screen_region = region
+        visible = bool(self.capture_selector and self.capture_selector.window.isVisible())
+        self.controls["capture_window"].setTitle_("Hide frame" if visible else "Capture window")
+        x, y, width, height = region
+        self.controls["capture_window"].setToolTip_(
+            f"Capturing {width} × {height} at {x}, {y}. Drag the frame to another display; resize any edge. "
+            "Closing the frame keeps this area. Use Capture primary display in the app menu to reset."
+        )
+        if persist and not self.demo:
+            save_settings(self.settings)
+
+    def capturePrimaryDisplay_(self, sender):
+        if self.capture_selector:
+            self.capture_selector.dispose()
+            self.capture_selector = None
+        self.settings.screen_region = None
+        self.controls["capture_window"].setTitle_("Capture window")
+        self.controls["capture_window"].setToolTip_("Capturing the primary display. Open a frame to select a smaller area.")
+        if not self.demo:
+            save_settings(self.settings)
 
     def toggleRunning_(self, sender):
         if self.running:
@@ -1574,6 +1622,8 @@ class Controller(NSObject):
     def toggleVisibility_(self, sender):
         self.overlay_hidden = not self.overlay_hidden
         if self.overlay_hidden:
+            if self.capture_selector and self.capture_selector.window.isVisible():
+                self.capture_selector.hide()
             self.window.orderOut_(None)
         else:
             self.window.deminiaturize_(None)
@@ -1776,6 +1826,9 @@ class Controller(NSObject):
         if self.midi:
             self.midi.close()
         self.screen.close()
+        if self.capture_selector:
+            self.capture_selector.dispose()
+            self.capture_selector = None
         if not self.demo:
             self.settings.goal = self.context.goal
             rect = self.window.frame()

@@ -1,4 +1,14 @@
-# Implementation status — September 11, 2026
+# Implementation status
+
+## October 11, 2026 updates
+
+Quick replies use GPT-6 Luna with `none` reasoning and Fast processing. Saved Codex Spark quick settings migrate automatically; the Astra workers retain their separate settings. See the [replacement checks](quick-model-replacement.md).
+
+The Capture window control edits a saved global screen rectangle using a transparent native panel. Visible edges and handles stay outside the captured interior. Closing the frame retains the area; the app menu can reset to the primary display. Geometry uses the primary display’s top edge, never the active display’s height, and keeps signed coordinates for screens above or left of the primary. Screenshots retain the one-shot PyAutoGUI/Pillow path. A default capture now specifies the primary rectangle explicitly, preventing multi-display screenshots from leaving extra raw temporary files.
+
+Native checks exercised frame movement and resizing on both attached displays, transparent interior pixels, persistence, screenshot exclusion, and the narrow-window toolbar. Separate live checks captured only owned color fixtures on each display and across the shared display boundary; their pixels matched the intended regions. There are no new capture streams, screenshot-hide delays, or model calls from moving the frame.
+
+## Earlier implementation and verification
 
 The overhaul is implemented as one Python/PyObjC/AppKit application. The pre-overhaul source remains in Git history. The old mode-specific entry points, prompts, static personal/interview material, and fixed-column renderers were retired; `test.py` and `lib/main.py` are import-safe compatibility launchers.
 
@@ -78,7 +88,7 @@ When malformed status values were explicitly included in that fixture's requirem
 
 The final live run, including Help now's fresh screen/audio collection, returned quick help at 4.9 seconds and the deeper artifact at 13.8 seconds. After MIDI restoration, the automated suite has 33 passing tests; the native smoke check also passes.
 
-The current local preferences use Codex Spark at low reasoning and GPT-6 Astra at medium reasoning with Fast processing, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed. The earlier GPT-5.5 results above retain their original model identity; the [Astra comparisons](astra-processing-comparison.md) record the later model update and controlled comparisons of processing and reasoning settings on one recorded case. The expanded suite has 76 passing tests; native checks cover saving the Fast preference and clearing it when switching away from Codex.
+At the September checkpoint, the local preferences used Codex Spark at low reasoning and GPT-6 Astra at medium reasoning with Fast processing, local transcription, and separate microphone/system channels. Capture remains paused at startup. No API keys were copied into the application or committed. The earlier GPT-5.5 results above retain their original model identity; the [Astra comparisons](astra-processing-comparison.md) record the later model update and controlled comparisons of processing and reasoning settings on one recorded case. The expanded suite has 76 passing tests; native checks cover saving the Fast preference and clearing it when switching away from Codex.
 
 After the 0.2 additions, the explicitly rendered-fixture live test passed with quick/deep output at 5.7/15.3 seconds. It used real OCR, local ASR, vision and Codex calls, and native rendering; desktop capture was marked false because macOS reported no active display. The earlier hardware and active-display checks above remain distinct evidence.
 

@@ -321,7 +321,7 @@ class SettingsAudioTests(unittest.TestCase):
                     (root / "settings.json").write_text(json.dumps(data))
                     loaded = load_settings(root)
                     self.assertEqual(loaded.deep.fast_mode, expected)
-                    self.assertFalse(loaded.quick.fast_mode)
+                    self.assertEqual(loaded.quick.model_dump(), old["quick"])
                     save_settings(loaded, root)
                     restored = load_settings(root)
                     self.assertEqual(restored, loaded)

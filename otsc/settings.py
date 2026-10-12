@@ -60,11 +60,11 @@ class ModelChoice(BaseModel):
 
 
 class Settings(BaseModel):
-    model_defaults_version: int = Field(default=2, ge=1)
+    model_defaults_version: int = Field(default=3, ge=1)
     configured: bool = False
     quick: ModelChoice = Field(
         default_factory=lambda: ModelChoice(
-            provider="codex", model="gpt-5.3-codex-spark", reasoning="low", max_tokens=1800
+            provider="codex", model="gpt-6-luna", reasoning="none", fast_mode=True, max_tokens=1800
         )
     )
     deep: ModelChoice = Field(
@@ -128,6 +128,17 @@ def load_settings(directory: Path | None = None) -> Settings:
         if isinstance(deep, dict) and all(deep.get(k) == v for k, v in prior.items()) and "fast_mode" not in deep:
             data["deep"] = {**deep, "fast_mode": True}
         data["model_defaults_version"] = 2
+    if isinstance(data, dict):
+        quick = data.get("quick", {})
+        if isinstance(quick, dict) and quick.get("provider") == "codex" and quick.get("model") == "gpt-5.3-codex-spark":
+            # Retired model: also repair stale settings saved by an older app.
+            # Other providers/models and unrelated preferences remain intact.
+            defaults = Settings().quick
+            data["quick"] = {
+                **quick, "model": defaults.model, "reasoning": defaults.reasoning, "fast_mode": defaults.fast_mode,
+            }
+        if data.get("model_defaults_version") == 2:
+            data["model_defaults_version"] = 3
     return Settings.model_validate(data)
 
 
